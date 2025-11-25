@@ -22,6 +22,9 @@ Item {
     property bool showVisualizer: true
     property real currentPitch: 1.0  // Store pitch locally (MediaPlayer doesn't support it directly)
     property bool betaAudioProcessingEnabled: true
+    property bool metadataReady: false
+    property int metadataRetryRemaining: 0
+    property var lastLyricsStatus: ({ status: 0, statusName: "idle", message: "" })
     
     // Custom audio player for real EQ processing
     property CustomAudioPlayer customPlayer: null
@@ -92,16 +95,11 @@ Item {
                 controlsHideTimer.stop()
             }
         }
+        function onSourceChanged() {
+            handleMetadataSourceChange("player-source")
+        }
         function onMetaDataChanged() {
-            // Force update title and artist text
-            titleText.text = audioPlayer.getMetaString(MediaMetaData.Title) || audioPlayer.getMetaString("Title") || "Unknown Title"
-            artistText.text = audioPlayer.getMetaString(MediaMetaData.ContributingArtist) || audioPlayer.getMetaString("ContributingArtist") || audioPlayer.getMetaString("Artist") || "Unknown Artist"
-            // Fetch lyrics when metadata is available
-            if (player.duration > 0) {
-                Qt.callLater(function() {
-                    fetchLyrics()
-                })
-            }
+            scheduleMetadataRefresh(0, "player-metadata")
         }
     }
     
@@ -135,69 +133,22 @@ Item {
             }
         }
         function onSourceChanged() {
-            // When source changes, reset metadata display and wait for new metadata
-            if (customPlayer) {
-                // Clear metadata display temporarily
-                titleText.text = "Unknown Title"
-                artistText.text = "Unknown Artist"
-                // Start checking for metadata updates
-                metadataCheckTimer.restart()
-            }
+            handleMetadataSourceChange("custom-player-source")
         }
         function onMetaDataChanged() {
             if (customPlayer) {
-                // Use Qt.callLater to ensure UI updates happen on next event loop
-                Qt.callLater(function() {
-                    // Force update title and artist text
-                    const title = audioPlayer.getMetaString(MediaMetaData.Title) || audioPlayer.getMetaString("Title")
-                    const artist = audioPlayer.getMetaString(MediaMetaData.ContributingArtist) || audioPlayer.getMetaString("ContributingArtist") || audioPlayer.getMetaString("Artist")
-                    
-                    if (title && title !== "Unknown Title") {
-                        titleText.text = title
-                    } else if (!title) {
-                        titleText.text = "Unknown Title"
-                    }
-                    
-                    if (artist && artist !== "Unknown Artist") {
-                        artistText.text = artist
-                    } else if (!artist) {
-                        artistText.text = "Unknown Artist"
-                    }
-                    
-                    // Fetch lyrics when metadata is available
-                    if (customPlayer.duration > 0) {
-                        fetchLyrics()
-                    }
-                })
+                scheduleMetadataRefresh(0, "custom-metadata")
             }
         }
     }
     
-    // Timer to periodically check for metadata updates (fallback for when signals don't fire)
+    // Timer to retry metadata refresh a few times while metadata is loading asynchronously
     Timer {
-        id: metadataCheckTimer
-        interval: 500  // Check every 500ms
-        running: betaAudioProcessingEnabled && customPlayer && customPlayer.source !== "" && (customPlayer.playbackState !== CustomAudioPlayer.StoppedState || titleText.text === "Unknown Title" || artistText.text === "Unknown Artist")
-        repeat: true
+        id: metadataRetryTimer
+        interval: 300
+        repeat: false
         onTriggered: {
-            if (customPlayer && customPlayer.metaData && Object.keys(customPlayer.metaData).length > 0) {
-                // Metadata is available - ensure UI is updated
-                const title = getMetaString(MediaMetaData.Title) || getMetaString("Title")
-                const artist = getMetaString(MediaMetaData.ContributingArtist) || getMetaString("ContributingArtist") || getMetaString("Artist")
-                
-                // Always update if we have metadata and UI shows "Unknown"
-                if (title && (titleText.text === "Unknown Title" || titleText.text !== title)) {
-                    titleText.text = title
-                }
-                if (artist && (artistText.text === "Unknown Artist" || artistText.text !== artist)) {
-                    artistText.text = artist
-                }
-                
-                // Trigger lyrics fetch if not already fetched
-                if (customPlayer.duration > 0 && lastFetchedSignature === "") {
-                    fetchLyrics()
-                }
-            }
+            attemptMetadataRefresh("retry")
         }
     }
     
@@ -217,21 +168,28 @@ Item {
         id: lyricsClient
         
         onLyricsFetched: function(success, errorMessage) {
+            audioPlayer.lastLyricsStatus = lyricsClient.lastStatusInfo || audioPlayer.lastLyricsStatus
             if (success) {
                 console.log("[Lyrics] Lyrics fetched successfully")
             } else {
-                console.log("[Lyrics] Failed to fetch lyrics:", errorMessage)
-                // Clear lyrics on failure to prevent showing old lyrics
-                // The C++ code should already clear them, but ensure UI updates
+                const statusInfo = audioPlayer.lastLyricsStatus || {}
+                const message = statusInfo.message || errorMessage
+                console.log("[Lyrics] Failed to fetch lyrics:", message, "(" + (statusInfo.statusName || "unknown") + ")")
                 currentLyricIndex = -1
             }
         }
         
-        // Clear lyrics when lyricLines change (if they become empty)
         onLyricLinesChanged: {
             if (lyricsClient.lyricLines.length === 0) {
                 currentLyricIndex = -1
             }
+        }
+    }
+
+    Connections {
+        target: lyricsClient
+        function onLastStatusChanged() {
+            audioPlayer.lastLyricsStatus = lyricsClient.lastStatusInfo || audioPlayer.lastLyricsStatus
         }
     }
     
@@ -813,6 +771,84 @@ Item {
         return null
     }
     
+    function refreshMetadataDisplay(options) {
+        options = options || {}
+        const forceUnknown = options.forceUnknown === true
+        let title = forceUnknown ? "" : (getMetaString(MediaMetaData.Title) || getMetaString("Title") || "")
+        let artist = forceUnknown ? "" : (getMetaString(MediaMetaData.ContributingArtist) || getMetaString("ContributingArtist") || getMetaString("Artist") || "")
+        
+        const hasTitle = !!title
+        const hasArtist = !!artist
+        
+        if (!hasTitle) {
+            title = "Unknown Title"
+        }
+        if (!hasArtist) {
+            artist = "Unknown Artist"
+        }
+        
+        if (titleText.text !== title) {
+            titleText.text = title
+        }
+        if (artistText.text !== artist) {
+            artistText.text = artist
+        }
+        
+        const ready = hasTitle || hasArtist
+        if (forceUnknown) {
+            metadataReady = false
+        } else if (ready) {
+            const shouldTrigger = (options.triggerLyrics === undefined) ? true : options.triggerLyrics
+            const forceLyrics = options.forceLyrics === true
+            if (!metadataReady || forceLyrics) {
+                metadataReady = true
+                if (shouldTrigger) {
+                    fetchLyrics()
+                }
+            }
+        } else {
+            metadataReady = false
+        }
+        return ready
+    }
+    
+    function attemptMetadataRefresh(reason) {
+        if (audioPlayer.source === "") {
+            metadataRetryRemaining = 0
+            metadataReady = false
+            refreshMetadataDisplay({ forceUnknown: true, triggerLyrics: false })
+            return
+        }
+        
+        const ready = refreshMetadataDisplay({ reason: reason })
+        if (!ready && metadataRetryRemaining > 0) {
+            metadataRetryRemaining = Math.max(0, metadataRetryRemaining - 1)
+            metadataRetryTimer.restart()
+        } else {
+            metadataRetryRemaining = 0
+        }
+    }
+    
+    function scheduleMetadataRefresh(retries, reason) {
+        if (retries !== undefined) {
+            metadataRetryRemaining = Math.max(0, retries)
+        }
+        metadataRetryTimer.stop()
+        attemptMetadataRefresh(reason)
+    }
+    
+    function handleMetadataSourceChange(reason) {
+        metadataReady = false
+        metadataRetryTimer.stop()
+        refreshMetadataDisplay({ forceUnknown: true, triggerLyrics: false })
+        if (audioPlayer.source === "") {
+            metadataRetryRemaining = 0
+            return
+        }
+        metadataRetryRemaining = 8
+        attemptMetadataRefresh(reason)
+    }
+    
     // Lyrics display section
     ColumnLayout {
         id: lyricsSection
@@ -930,6 +966,28 @@ Item {
             horizontalAlignment: Text.AlignHCenter
         }
     }
+
+    Text {
+        id: lyricsStatusText
+        anchors.top: lyricsSection.bottom
+        anchors.horizontalCenter: lyricsSection.horizontalCenter
+        anchors.topMargin: 12
+        text: {
+            if (lyricsClient.loading) {
+                return "Searching for lyrics..."
+            }
+            const info = audioPlayer.lastLyricsStatus || {}
+            return info && info.message ? info.message : ""
+        }
+        visible: showLyrics && lyricsClient.lyricLines.length === 0 &&
+                 ((lyricsClient.loading) ||
+                  ((audioPlayer.lastLyricsStatus || {}).statusName !== "idle" &&
+                   (audioPlayer.lastLyricsStatus || {}).message !== ""))
+        color: Qt.lighter(foregroundColor, 1.3)
+        font.pixelSize: 16
+        opacity: visible ? 0.9 : 0.0
+        Behavior on opacity { NumberAnimation { duration: 200 } }
+    }
     
     // Expose player properties
     property int duration: (betaAudioProcessingEnabled && customPlayer) ? customPlayer.duration : player.duration
@@ -983,6 +1041,8 @@ Item {
             // The lyrics will be cleared when new fetch starts or fails
         }
         
+        handleMetadataSourceChange("audio-source-changed")
+
         // CRITICAL: Stop BOTH players first to prevent dual playback
         // Always stop both, regardless of which one we're about to use
         if (customPlayer) {
@@ -1000,47 +1060,7 @@ Item {
                         customPlayer.source = source
                     }
                     customPlayer.volume = audioPlayer.volume
-                    
-                    // Cover art extraction is handled by Main.qml when currentImage changes
-                    // No need to extract here to avoid duplicate extractions
-                    
-                    // Force UI update after a short delay to ensure metadata is loaded
-                    // Use multiple delayed checks to catch metadata when it becomes available
-                    function updateMetadataUI() {
-                        if (customPlayer && customPlayer.metaData && Object.keys(customPlayer.metaData).length > 0) {
-                            const title = getMetaString(MediaMetaData.Title) || getMetaString("Title")
-                            const artist = getMetaString(MediaMetaData.ContributingArtist) || getMetaString("ContributingArtist") || getMetaString("Artist")
-                            
-                            if (title && title !== "Unknown Title") {
-                                titleText.text = title
-                            }
-                            if (artist && artist !== "Unknown Artist") {
-                                artistText.text = artist
-                            }
-                            
-                            // Trigger lyrics fetch if metadata is available
-                            if (customPlayer.duration > 0) {
-                                fetchLyrics()
-                            }
-                        } else if (titleText.text === "Unknown Title" || artistText.text === "Unknown Artist") {
-                            // Metadata not ready yet, try again after a delay
-                            Qt.callLater(function() {
-                                updateMetadataUI()
-                            })
-                        }
-                    }
-                    
-                    // Try immediately, then after delays
-                    Qt.callLater(function() {
-                        updateMetadataUI()
-                    })
-                    // Also try after a longer delay in case metadata extraction is slow
-                    Qt.callLater(function() {
-                        Qt.callLater(function() {
-                            updateMetadataUI()
-                        })
-                    })
-                    
+
                     // Only play if not already playing
                     if (customPlayer.playbackState !== CustomAudioPlayer.PlayingState) {
                         customPlayer.play()

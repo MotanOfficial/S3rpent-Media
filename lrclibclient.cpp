@@ -7,15 +7,39 @@
 #include <QRegularExpression>
 #include <QDebug>
 
+namespace {
+constexpr const char kReplySignatureProperty[] = "lrclibRequestSignature";
+constexpr const char kReplyAutoFetchProperty[] = "lrclibAutoFetch";
+
+QString statusToString(LRCLibClient::Status status)
+{
+    switch (status) {
+    case LRCLibClient::StatusIdle: return "idle";
+    case LRCLibClient::StatusSearching: return "searching";
+    case LRCLibClient::StatusLoaded: return "loaded";
+    case LRCLibClient::StatusNoMatch: return "no_match";
+    case LRCLibClient::StatusNetworkError: return "network_error";
+    case LRCLibClient::StatusParseError: return "parse_error";
+    case LRCLibClient::StatusInstrumental: return "instrumental";
+    case LRCLibClient::StatusInvalidRequest: return "invalid_request";
+    }
+    return "unknown";
+}
+}
+
 LRCLibClient::LRCLibClient(QObject *parent)
     : QObject(parent)
     , m_networkManager(new QNetworkAccessManager(this))
     , m_loading(false)
-    , m_searchTrackName()
-    , m_searchArtistName()
-    , m_searchAlbumName()
-    , m_retryingWithoutArtist(false)
+    , m_lyricLines()
+    , m_lastStatus(StatusIdle)
+    , m_currentSearchMode(SearchWithArtist)
+    , m_activeRequestSignature()
 {
+    m_lastStatusInfo = {
+        { "status", static_cast<int>(m_lastStatus) },
+        { "statusName", statusToString(m_lastStatus) }
+    };
     connect(m_networkManager, &QNetworkAccessManager::finished,
             this, &LRCLibClient::onReplyFinished);
 }
@@ -29,6 +53,7 @@ void LRCLibClient::fetchLyrics(const QString &trackName, const QString &artistNa
 {
     if (trackName.isEmpty()) {
         qWarning() << "[LRCLIB] Invalid parameters for fetchLyrics - trackName is required";
+        updateStatus(StatusInvalidRequest, "Track name is required");
         emit lyricsFetched(false, "Invalid parameters");
         return;
     }
@@ -37,30 +62,11 @@ void LRCLibClient::fetchLyrics(const QString &trackName, const QString &artistNa
     m_searchTrackName = trackName;
     m_searchArtistName = artistName;
     m_searchAlbumName = albumName;
-    m_retryingWithoutArtist = false;  // Reset retry flag
 
-    setLoading(true);
-    
-    // Use search API which is more flexible - can work with just track_name
-    QUrl url("https://lrclib.net/api/search");
-    QUrlQuery query;
-    query.addQueryItem("track_name", trackName);
-    // Artist name is optional - include it in first attempt
-    if (!artistName.isEmpty()) {
-        query.addQueryItem("artist_name", artistName);
-    }
-    // Album name is optional
-    if (!albumName.isEmpty()) {
-        query.addQueryItem("album_name", albumName);
-    }
-    url.setQuery(query);
-
-    QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::UserAgentHeader, 
-                     "s3rp3nt_media v0.1 (https://github.com/s3rp3nt/s3rp3nt_media)");
-    
-    qDebug() << "[LRCLIB] Searching lyrics:" << url.toString();
-    m_networkManager->get(request);
+    const QString requestSignature = buildRequestSignature(trackName, artistName, albumName);
+    m_activeRequestSignature = requestSignature;
+    m_currentSearchMode = SearchWithArtist;
+    sendSearchRequest(m_currentSearchMode);
 }
 
 void LRCLibClient::fetchLyricsCached(const QString &trackName, const QString &artistName, 
@@ -68,10 +74,15 @@ void LRCLibClient::fetchLyricsCached(const QString &trackName, const QString &ar
 {
     if (trackName.isEmpty() || artistName.isEmpty() || albumName.isEmpty()) {
         qWarning() << "[LRCLIB] Invalid parameters for fetchLyricsCached";
+        updateStatus(StatusInvalidRequest, "Track, artist and album are required for cached fetch");
         emit lyricsFetched(false, "Invalid parameters");
         return;
     }
 
+    const QString requestSignature = buildRequestSignature(trackName, artistName, albumName);
+    m_activeRequestSignature = requestSignature;
+    updateStatus(StatusSearching, "Fetching cached lyrics",
+                 { { "track", trackName }, { "artist", artistName }, { "album", albumName } });
     setLoading(true);
     
     QUrl url("https://lrclib.net/api/get-cached");
@@ -87,17 +98,22 @@ void LRCLibClient::fetchLyricsCached(const QString &trackName, const QString &ar
                      "s3rp3nt_media v0.1 (https://github.com/s3rp3nt/s3rp3nt_media)");
     
     qDebug() << "[LRCLIB] Fetching cached lyrics:" << url.toString();
-    m_networkManager->get(request);
+    QNetworkReply *reply = m_networkManager->get(request);
+    tagReplyWithSignature(reply, requestSignature, true);
 }
 
 void LRCLibClient::fetchLyricsById(int id)
 {
     if (id <= 0) {
         qWarning() << "[LRCLIB] Invalid ID for fetchLyricsById";
+        updateStatus(StatusInvalidRequest, "Invalid lyrics ID");
         emit lyricsFetched(false, "Invalid ID");
         return;
     }
 
+    const QString requestSignature = QStringLiteral("id:%1").arg(id);
+    m_activeRequestSignature = requestSignature;
+    updateStatus(StatusSearching, "Fetching lyrics by ID", { { "id", id } });
     setLoading(true);
     
     QUrl url(QString("https://lrclib.net/api/get/%1").arg(id));
@@ -107,7 +123,8 @@ void LRCLibClient::fetchLyricsById(int id)
                      "s3rp3nt_media v0.1 (https://github.com/s3rp3nt/s3rp3nt_media)");
     
     qDebug() << "[LRCLIB] Fetching lyrics by ID:" << url.toString();
-    m_networkManager->get(request);
+    QNetworkReply *reply = m_networkManager->get(request);
+    tagReplyWithSignature(reply, requestSignature, true);
 }
 
 void LRCLibClient::searchLyrics(const QString &query, const QString &trackName, 
@@ -115,10 +132,13 @@ void LRCLibClient::searchLyrics(const QString &query, const QString &trackName,
 {
     if (query.isEmpty() && trackName.isEmpty()) {
         qWarning() << "[LRCLIB] At least one of 'query' or 'trackName' must be provided";
+        updateStatus(StatusInvalidRequest, "Provide either a query or track name");
         emit lyricsFetched(false, "Invalid search parameters");
         return;
     }
 
+    updateStatus(StatusSearching, "Searching lyrics (manual)",
+                 { { "query", query }, { "track", trackName }, { "artist", artistName }, { "album", albumName } });
     setLoading(true);
     
     QUrl url("https://lrclib.net/api/search");
@@ -144,11 +164,20 @@ void LRCLibClient::searchLyrics(const QString &query, const QString &trackName,
                      "s3rp3nt_media v0.1 (https://github.com/s3rp3nt/s3rp3nt_media)");
     
     qDebug() << "[LRCLIB] Searching lyrics:" << url.toString();
-    m_networkManager->get(request);
+    QNetworkReply *reply = m_networkManager->get(request);
+    tagReplyWithSignature(reply, QStringLiteral("search:%1|%2|%3|%4")
+                                   .arg(query, trackName, artistName, albumName),
+                          false);
 }
 
 void LRCLibClient::onReplyFinished(QNetworkReply *reply)
 {
+    if (shouldIgnoreReply(reply)) {
+        qDebug() << "[LRCLIB] Ignoring stale lyrics reply";
+        reply->deleteLater();
+        return;
+    }
+
     setLoading(false);
     
     if (reply->error() != QNetworkReply::NoError) {
@@ -158,6 +187,14 @@ void LRCLibClient::onReplyFinished(QNetworkReply *reply)
         setPlainLyrics("");
         m_lyricLines.clear();
         emit lyricLinesChanged();
+        QVariantMap details {
+            { "code", static_cast<int>(reply->error()) },
+            { "url", reply->url().toString() }
+        };
+        updateStatus(StatusNetworkError, reply->errorString(), details);
+        if (!m_searchTrackName.isEmpty()) {
+            resetSearchState();
+        }
         emit lyricsFetched(false, reply->errorString());
         reply->deleteLater();
         return;
@@ -183,6 +220,7 @@ void LRCLibClient::parseLyricsResponse(const QByteArray &data)
     
     if (error.error != QJsonParseError::NoError) {
         qWarning() << "[LRCLIB] JSON parse error:" << error.errorString();
+        updateStatus(StatusParseError, error.errorString());
         emit lyricsFetched(false, "Failed to parse response");
         return;
     }
@@ -196,6 +234,8 @@ void LRCLibClient::parseLyricsResponse(const QByteArray &data)
         setPlainLyrics("");
         m_lyricLines.clear();
         emit lyricLinesChanged();
+        updateStatus(StatusNoMatch, "Lyrics not found",
+                     { { "track", obj["trackName"].toString() }, { "artist", obj["artistName"].toString() } });
         emit lyricsFetched(false, "Lyrics not found");
         return;
     }
@@ -211,6 +251,8 @@ void LRCLibClient::parseLyricsResponse(const QByteArray &data)
         setPlainLyrics("");
         m_lyricLines.clear();
         emit lyricLinesChanged();
+        updateStatus(StatusInstrumental, "Track is instrumental",
+                     { { "track", obj["trackName"].toString() } });
         emit lyricsFetched(false, "Track is instrumental");
         return;
     }
@@ -228,6 +270,10 @@ void LRCLibClient::parseLyricsResponse(const QByteArray &data)
     }
 
     qDebug() << "[LRCLIB] Lyrics fetched successfully. Lines:" << m_lyricLines.size();
+    updateStatus(StatusLoaded, "Lyrics loaded",
+                 { { "track", obj["trackName"].toString() },
+                   { "artist", obj["artistName"].toString() },
+                   { "album", obj["albumName"].toString() } });
     emit lyricsFetched(true);
 }
 
@@ -238,6 +284,9 @@ void LRCLibClient::parseSearchResponse(const QByteArray &data)
     
     if (error.error != QJsonParseError::NoError) {
         qWarning() << "[LRCLIB] JSON parse error:" << error.errorString();
+        if (!m_searchTrackName.isEmpty()) {
+            resetSearchState();
+        }
         emit lyricsFetched(false, "Failed to parse search response");
         return;
     }
@@ -250,6 +299,8 @@ void LRCLibClient::parseSearchResponse(const QByteArray &data)
         QJsonObject bestMatch;
         int bestScore = -1;
         
+        const bool checkArtistMatch = (m_currentSearchMode == SearchWithArtist) && !m_searchArtistName.isEmpty();
+
         // Find the best matching result
         for (const QJsonValue &value : array) {
             QJsonObject obj = value.toObject();
@@ -265,8 +316,7 @@ void LRCLibClient::parseSearchResponse(const QByteArray &data)
             if (!m_searchAlbumName.isEmpty() && resultAlbum.compare(m_searchAlbumName, Qt::CaseInsensitive) == 0) {
                 score += 50;  // Exact album match
             }
-            // Only check artist match if we're not retrying without artist
-            if (!m_retryingWithoutArtist && !m_searchArtistName.isEmpty()) {
+            if (checkArtistMatch) {
                 // Check if any artist in the result matches (handle multiple artists)
                 QStringList searchArtists = m_searchArtistName.split(",", Qt::SkipEmptyParts);
                 QStringList resultArtists = resultArtist.split(",", Qt::SkipEmptyParts);
@@ -289,11 +339,15 @@ void LRCLibClient::parseSearchResponse(const QByteArray &data)
         // Don't clear search parameters yet if we're going to retry
         
         if (bestScore >= 0 && !bestMatch.isEmpty()) {
-            // Found a match - clear search parameters
-            m_searchTrackName.clear();
-            m_searchArtistName.clear();
-            m_searchAlbumName.clear();
-            m_retryingWithoutArtist = false;
+            QVariantMap successDetails {
+                { "track", bestMatch["trackName"].toString() },
+                { "artist", bestMatch["artistName"].toString() },
+                { "album", bestMatch["albumName"].toString() },
+                { "attemptLabel", (m_currentSearchMode == SearchWithArtist) ? "track+artist"
+                                 : (m_currentSearchMode == SearchWithoutArtist) ? "track-only"
+                                 : "fallback-q" }
+            };
+            resetSearchState();
             // Extract lyrics from best match
             QString synced = bestMatch["syncedLyrics"].toString();
             QString plain = bestMatch["plainLyrics"].toString();
@@ -305,6 +359,7 @@ void LRCLibClient::parseSearchResponse(const QByteArray &data)
                 setPlainLyrics("");
                 m_lyricLines.clear();
                 emit lyricLinesChanged();
+                updateStatus(StatusInstrumental, "Track is instrumental", successDetails);
                 emit lyricsFetched(false, "Track is instrumental");
                 return;
             }
@@ -322,52 +377,32 @@ void LRCLibClient::parseSearchResponse(const QByteArray &data)
             }
             
             qDebug() << "[LRCLIB] Lyrics fetched successfully from search. Lines:" << m_lyricLines.size();
+            updateStatus(StatusLoaded, "Lyrics loaded", successDetails);
             emit lyricsFetched(true);
             return;
         } else {
-            // No results found - if we haven't retried without artist, try again
-            if (!m_retryingWithoutArtist && !m_searchArtistName.isEmpty()) {
-                qDebug() << "[LRCLIB] No results with artist, retrying without artist name";
-                m_retryingWithoutArtist = true;
-                
-                // Retry search without artist name
-                QUrl url("https://lrclib.net/api/search");
-                QUrlQuery query;
-                query.addQueryItem("track_name", m_searchTrackName);
-                // Don't include artist_name this time
-                if (!m_searchAlbumName.isEmpty()) {
-                    query.addQueryItem("album_name", m_searchAlbumName);
-                }
-                url.setQuery(query);
-                
-                QNetworkRequest request(url);
-                request.setHeader(QNetworkRequest::UserAgentHeader, 
-                                 "s3rp3nt_media v0.1 (https://github.com/s3rp3nt/s3rp3nt_media)");
-                
-                qDebug() << "[LRCLIB] Retrying search without artist:" << url.toString();
-                setLoading(true);
-                m_networkManager->get(request);
-                return;  // Don't clear search parameters yet - wait for retry response
+            if (tryNextSearchAttempt()) {
+                return;
             }
             
-            // No results even after retry, or already retried
-            qDebug() << "[LRCLIB] No matching results found in search (after retry if applicable)";
-            // Clear search parameters
-            m_searchTrackName.clear();
-            m_searchArtistName.clear();
-            m_searchAlbumName.clear();
-            m_retryingWithoutArtist = false;
+            qDebug() << "[LRCLIB] No matching results found after all attempts";
+            QString failedTrack = m_searchTrackName;
+            QString failedArtist = m_searchArtistName;
+            QString failedAlbum = m_searchAlbumName;
+            resetSearchState();
             setSyncedLyrics("");
             setPlainLyrics("");
             m_lyricLines.clear();
             emit lyricLinesChanged();
+            updateStatus(StatusNoMatch, "No matching lyrics found",
+                         { { "track", failedTrack }, { "artist", failedArtist }, { "album", failedAlbum } });
             emit lyricsFetched(false, "No matching lyrics found");
             return;
         }
     }
     
     // Otherwise, this was called from searchLyrics() - return results as before
-    for (const QJsonValue &value : array) {
+        for (const QJsonValue &value : array) {
         QJsonObject obj = value.toObject();
         QVariantMap result;
         result["id"] = obj["id"].toInt();
@@ -380,8 +415,14 @@ void LRCLibClient::parseSearchResponse(const QByteArray &data)
     }
 
     qDebug() << "[LRCLIB] Search returned" << results.size() << "results";
-    emit searchResultsReceived(results);
-    emit lyricsFetched(true);
+        emit searchResultsReceived(results);
+        if (results.isEmpty()) {
+            updateStatus(StatusNoMatch, "No matching lyrics found (manual search)");
+        } else {
+            updateStatus(StatusLoaded, "Search results ready",
+                         { { "results", results.size() } });
+        }
+        emit lyricsFetched(!results.isEmpty(), results.isEmpty() ? "No results" : "");
 }
 
 QVariantList LRCLibClient::parseLRCLines(const QString &lrcText)
@@ -466,6 +507,9 @@ void LRCLibClient::clearLyrics()
     setPlainLyrics("");
     m_lyricLines.clear();
     emit lyricLinesChanged();
+    m_activeRequestSignature.clear();
+    setLoading(false);
+    updateStatus(StatusIdle, "Lyrics cleared");
 }
 
 int LRCLibClient::getCurrentLyricLineIndex(qint64 positionMs) const
@@ -516,3 +560,161 @@ void LRCLibClient::setLoading(bool loading)
     }
 }
 
+QString LRCLibClient::buildRequestSignature(const QString &trackName,
+                                            const QString &artistName,
+                                            const QString &albumName) const
+{
+    return trackName + "|" + artistName + "|" + albumName;
+}
+
+void LRCLibClient::tagReplyWithSignature(QNetworkReply *reply,
+                                         const QString &signature,
+                                         bool autoFetch) const
+{
+    if (!reply)
+        return;
+
+    reply->setProperty(kReplySignatureProperty, signature);
+    reply->setProperty(kReplyAutoFetchProperty, autoFetch);
+}
+
+bool LRCLibClient::shouldIgnoreReply(QNetworkReply *reply) const
+{
+    if (!reply)
+        return true;
+
+    const bool autoFetch = reply->property(kReplyAutoFetchProperty).toBool();
+    if (!autoFetch) {
+        // Independent searches shouldn't be filtered
+        return false;
+    }
+
+    const QString replySignature = reply->property(kReplySignatureProperty).toString();
+    if (replySignature.isEmpty()) {
+        return false;
+    }
+
+    if (m_activeRequestSignature.isEmpty()) {
+        return true;
+    }
+
+    return replySignature != m_activeRequestSignature;
+}
+
+void LRCLibClient::sendSearchRequest(SearchAttemptMode mode)
+{
+    if (m_searchTrackName.isEmpty() && mode != SearchQueryFallback) {
+        qWarning() << "[LRCLIB] Cannot start search attempt - track name missing";
+        return;
+    }
+
+    setLoading(true);
+
+    QUrl url("https://lrclib.net/api/search");
+    QUrlQuery query;
+    QString attemptLabel;
+
+    switch (mode) {
+    case SearchWithArtist:
+        query.addQueryItem("track_name", m_searchTrackName);
+        if (!m_searchArtistName.isEmpty()) {
+            query.addQueryItem("artist_name", m_searchArtistName);
+        }
+        if (!m_searchAlbumName.isEmpty()) {
+            query.addQueryItem("album_name", m_searchAlbumName);
+        }
+        attemptLabel = "track+artist";
+        break;
+    case SearchWithoutArtist:
+        query.addQueryItem("track_name", m_searchTrackName);
+        if (!m_searchAlbumName.isEmpty()) {
+            query.addQueryItem("album_name", m_searchAlbumName);
+        }
+        attemptLabel = "track-only";
+        break;
+    case SearchQueryFallback: {
+        QString q = m_searchTrackName;
+        if (!m_searchAlbumName.isEmpty()) {
+            q += " " + m_searchAlbumName;
+        }
+        if (q.trimmed().isEmpty()) {
+            q = m_searchTrackName;
+        }
+        query.addQueryItem("q", q.trimmed());
+        if (!m_searchTrackName.isEmpty()) {
+            query.addQueryItem("track_name", m_searchTrackName);
+        }
+        if (!m_searchAlbumName.isEmpty()) {
+            query.addQueryItem("album_name", m_searchAlbumName);
+        }
+        attemptLabel = "fallback-q";
+        break;
+    }
+    }
+
+    url.setQuery(query);
+
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::UserAgentHeader, 
+                     "s3rp3nt_media v0.1 (https://github.com/s3rp3nt/s3rp3nt_media)");
+
+    const int attemptNumber = static_cast<int>(mode) + 1;
+    QVariantMap details {
+        { "track", m_searchTrackName },
+        { "artist", m_searchArtistName },
+        { "album", m_searchAlbumName },
+        { "attempt", attemptNumber },
+        { "attemptLabel", attemptLabel }
+    };
+    updateStatus(StatusSearching, "Searching lyrics", details);
+    qDebug() << "[LRCLIB] Searching lyrics (attempt" << attemptNumber << "-" << attemptLabel << "):" << url.toString();
+    QNetworkReply *reply = m_networkManager->get(request);
+    tagReplyWithSignature(reply, m_activeRequestSignature, true);
+}
+
+bool LRCLibClient::tryNextSearchAttempt()
+{
+    if (m_currentSearchMode == SearchQueryFallback) {
+        return false;
+    }
+
+    if (m_currentSearchMode == SearchWithArtist) {
+        m_currentSearchMode = SearchWithoutArtist;
+    } else if (m_currentSearchMode == SearchWithoutArtist) {
+        m_currentSearchMode = SearchQueryFallback;
+    } else {
+        return false;
+    }
+
+    sendSearchRequest(m_currentSearchMode);
+    return true;
+}
+
+void LRCLibClient::resetSearchState()
+{
+    m_searchTrackName.clear();
+    m_searchArtistName.clear();
+    m_searchAlbumName.clear();
+    m_currentSearchMode = SearchWithArtist;
+    m_activeRequestSignature.clear();
+}
+
+void LRCLibClient::updateStatus(Status status,
+                                const QString &message,
+                                const QVariantMap &details)
+{
+    QVariantMap info = details;
+    info["status"] = static_cast<int>(status);
+    info["statusName"] = statusToString(status);
+    if (!message.isEmpty()) {
+        info["message"] = message;
+    } else if (!info.contains("message")) {
+        info["message"] = "";
+    }
+
+    if (m_lastStatus != status || m_lastStatusInfo != info) {
+        m_lastStatus = status;
+        m_lastStatusInfo = info;
+        emit lastStatusChanged();
+    }
+}
