@@ -22,10 +22,11 @@ Item {
     property color foregroundColor: "#f5f5f5"
     property real savedVolume: 0.0  // Save volume before muting
     property bool useWMF: true  // Use WMF on Windows, fallback to MediaPlayer
+    property bool wmfReady: false  // Set to true only when actually needed
     
     // Sync volume changes from videoPlayer to wmfPlayer (but not via binding to avoid initial 1.0)
     onVolumeChanged: {
-        if (wmfPlayer && Math.abs(wmfPlayer.volume - videoPlayer.volume) > 0.001) {
+        if (wmfPlayer && wmfPlayer.volume !== undefined && Math.abs(wmfPlayer.volume - videoPlayer.volume) > 0.001) {
             console.log("[VideoPlayer] onVolumeChanged: Syncing", videoPlayer.volume, "-> wmfPlayer")
             wmfPlayer.volume = videoPlayer.volume
         }
@@ -43,50 +44,58 @@ Item {
     }
     
     // WMF Video Player (Windows only, better for problematic videos)
-    S3rp3ntMedia.WMFVideoPlayer {
-        id: wmfPlayer
-        source: videoPlayer.useWMF ? videoPlayer.source : ""
-        // Don't bind volume initially - set it manually after Settings loads
-        videoSink: videoDisplay.videoSink
-        
-        Component.onCompleted: {
-            // Set volume from videoPlayer after Settings has loaded
-            // This prevents the binding from setting it to 1.0 before Settings loads
-            volume = videoPlayer.volume
-            console.log("[VideoPlayer] wmfPlayer onCompleted: Set volume to", volume)
-        }
-        
-        onDurationChanged: {
-            if (wmfPlayer.duration > 0) {
-                console.log("[WMF] Duration available:", wmfPlayer.duration, "ms")
-                // Ensure volume is synced after video is loaded
-                if (Math.abs(wmfPlayer.volume - videoPlayer.volume) > 0.001) {
-                    console.log("[WMF] Syncing volume:", videoPlayer.volume, "-> wmfPlayer")
-                    wmfPlayer.volume = videoPlayer.volume
+    // Lazy-loaded to avoid slow startup when not viewing videos
+    property var wmfPlayer: wmfLoader.item
+    
+    Loader {
+        id: wmfLoader
+        // Only load when explicitly ready AND has a valid video source
+        active: videoPlayer.wmfReady && videoPlayer.useWMF && videoPlayer.source !== ""
+        sourceComponent: S3rp3ntMedia.WMFVideoPlayer {
+            id: wmfPlayerInstance
+            source: videoPlayer.source
+            // Don't bind volume initially - set it manually after Settings loads
+            videoSink: videoDisplay.videoSink
+            
+            Component.onCompleted: {
+                // Set volume from videoPlayer after Settings has loaded
+                // This prevents the binding from setting it to 1.0 before Settings loads
+                volume = videoPlayer.volume
+                console.log("[VideoPlayer] wmfPlayer onCompleted: Set volume to", volume)
+            }
+            
+            onDurationChanged: {
+                if (duration > 0) {
+                    console.log("[WMF] Duration available:", duration, "ms")
+                    // Ensure volume is synced after video is loaded
+                    if (Math.abs(volume - videoPlayer.volume) > 0.001) {
+                        console.log("[WMF] Syncing volume:", videoPlayer.volume, "-> wmfPlayer")
+                        volume = videoPlayer.volume
+                    }
+                    videoPlayer.durationAvailable()
+                    // Don't trigger auto-fix for WMF - it handles problematic videos better
+                    console.log("[WMF] Using WMF player - no auto-fix needed")
                 }
-                durationAvailable()
-                // Don't trigger auto-fix for WMF - it handles problematic videos better
-                console.log("[WMF] Using WMF player - no auto-fix needed")
             }
-        }
-        
-        onPlaybackStateChanged: {
-            playbackStateUpdated()
-            if (wmfPlayer.playbackState === 1) { // Playing
-                showControls = true
-                controlsHideTimer.start()
-            } else {
-                showControls = true
-                controlsHideTimer.stop()
+            
+            onPlaybackStateChanged: {
+                videoPlayer.playbackStateUpdated()
+                if (playbackState === 1) { // Playing
+                    videoPlayer.showControls = true
+                    controlsHideTimer.start()
+                } else {
+                    videoPlayer.showControls = true
+                    controlsHideTimer.stop()
+                }
             }
-        }
-        
-        onErrorOccurred: function(error, errorString) {
-            console.error("[WMF] Error occurred:", error, errorString)
-            // Fallback to MediaPlayer on error
-            if (videoPlayer.useWMF) {
-                console.log("[WMF] Falling back to MediaPlayer")
-                videoPlayer.useWMF = false
+            
+            onErrorOccurred: function(error, errorString) {
+                console.error("[WMF] Error occurred:", error, errorString)
+                // Fallback to MediaPlayer on error
+                if (videoPlayer.useWMF) {
+                    console.log("[WMF] Falling back to MediaPlayer")
+                    videoPlayer.useWMF = false
+                }
             }
         }
     }
@@ -324,6 +333,7 @@ Item {
     
     Connections {
         target: wmfPlayer
+        enabled: wmfPlayer !== null
         function onVolumeChanged(vol) {
             // Sync volume from wmfPlayer to videoPlayer (and save to Settings)
             if (Math.abs(videoPlayer.volume - vol) > 0.001) {
@@ -382,7 +392,7 @@ Item {
             playbackState: videoPlayer.playbackState
             seekable: videoPlayer.seekable
             accentColor: videoPlayer.accentColor
-            muted: videoPlayer.useWMF ? (wmfPlayer.volume === 0 && videoPlayer.volume > 0) : (audioOutput.volume === 0 && videoPlayer.volume > 0)
+            muted: (videoPlayer.useWMF && wmfPlayer) ? (wmfPlayer.volume === 0 && videoPlayer.volume > 0) : (audioOutput.volume === 0 && videoPlayer.volume > 0)
             
             onPlayClicked: {
                 videoPlayer.play()
@@ -396,7 +406,7 @@ Item {
             }
             
             onSeekRequested: function(pos) {
-                if (videoPlayer.useWMF) {
+                if (videoPlayer.useWMF && wmfPlayer) {
                     wmfPlayer.seek(pos)
                 } else {
                     mediaPlayer.position = pos
@@ -405,7 +415,7 @@ Item {
             
             onVolumeAdjusted: function(vol) {
                 videoPlayer.volume = vol
-                if (videoPlayer.useWMF) {
+                if (videoPlayer.useWMF && wmfPlayer) {
                     wmfPlayer.volume = vol
                 } else {
                     audioOutput.volume = vol
@@ -427,7 +437,7 @@ Item {
                         videoPlayer.volume = currentVol  // Sync the property
                     }
                     // Mute by setting volume to 0
-                    if (videoPlayer.useWMF) {
+                    if (videoPlayer.useWMF && wmfPlayer) {
                         wmfPlayer.volume = 0
                     } else {
                         audioOutput.volume = 0
@@ -436,7 +446,7 @@ Item {
                     // Restore saved volume
                     if (videoPlayer.savedVolume > 0) {
                         videoPlayer.volume = videoPlayer.savedVolume
-                        if (videoPlayer.useWMF) {
+                        if (videoPlayer.useWMF && wmfPlayer) {
                             wmfPlayer.volume = videoPlayer.savedVolume
                         } else {
                             audioOutput.volume = videoPlayer.savedVolume
@@ -444,7 +454,7 @@ Item {
                     } else {
                         // If no saved volume, restore to a reasonable default (0.5)
                         videoPlayer.volume = 0.5
-                        if (videoPlayer.useWMF) {
+                        if (videoPlayer.useWMF && wmfPlayer) {
                             wmfPlayer.volume = 0.5
                         } else {
                             audioOutput.volume = 0.5
@@ -482,34 +492,34 @@ Item {
     }
     
     
-    // Expose video properties (use WMF if available, otherwise MediaPlayer)
-    property int duration: useWMF ? wmfPlayer.duration : mediaPlayer.duration
-    property int position: useWMF ? wmfPlayer.position : mediaPlayer.position
-    property int playbackState: useWMF ? wmfPlayer.playbackState : mediaPlayer.playbackState
-    property bool hasVideo: useWMF ? true : mediaPlayer.hasVideo
-    property bool hasAudio: useWMF ? true : mediaPlayer.hasAudio
-    property var metaData: useWMF ? ({}) : mediaPlayer.metaData
+    // Expose video properties (use WMF if available and loaded, otherwise MediaPlayer)
+    property int duration: (useWMF && wmfPlayer) ? wmfPlayer.duration : mediaPlayer.duration
+    property int position: (useWMF && wmfPlayer) ? wmfPlayer.position : mediaPlayer.position
+    property int playbackState: (useWMF && wmfPlayer) ? wmfPlayer.playbackState : mediaPlayer.playbackState
+    property bool hasVideo: (useWMF && wmfPlayer) ? true : mediaPlayer.hasVideo
+    property bool hasAudio: (useWMF && wmfPlayer) ? true : mediaPlayer.hasAudio
+    property var metaData: (useWMF && wmfPlayer) ? ({}) : mediaPlayer.metaData
     property int implicitWidth: videoDisplay.implicitWidth
     property int implicitHeight: videoDisplay.implicitHeight
-    property bool seekable: useWMF ? wmfPlayer.seekable : mediaPlayer.seekable
-    property real playbackRate: useWMF ? 1.0 : mediaPlayer.playbackRate
+    property bool seekable: (useWMF && wmfPlayer) ? wmfPlayer.seekable : mediaPlayer.seekable
+    property real playbackRate: (useWMF && wmfPlayer) ? 1.0 : mediaPlayer.playbackRate
     
     function play() { 
-        if (useWMF) {
+        if (useWMF && wmfPlayer) {
             wmfPlayer.play()
         } else {
             mediaPlayer.play()
         }
     }
     function pause() { 
-        if (useWMF) {
+        if (useWMF && wmfPlayer) {
             wmfPlayer.pause()
         } else {
             mediaPlayer.pause()
         }
     }
     function stop() { 
-        if (useWMF) {
+        if (useWMF && wmfPlayer) {
             wmfPlayer.stop()
         } else {
             mediaPlayer.stop()
@@ -525,8 +535,10 @@ Item {
                 positionStallCount = 0
                 lastPosition = 0
             }
+            // Enable WMF loader now that we have a real source
+            wmfReady = true
             // Only set MediaPlayer source if NOT using WMF
-            // WMF player gets source automatically via binding on line 31
+            // WMF player gets source automatically via binding
             if (!useWMF) {
                 mediaPlayer.source = source
                 mediaPlayer.play()
@@ -535,6 +547,9 @@ Item {
                 mediaPlayer.stop()
                 mediaPlayer.source = ""
             }
+        } else {
+            // Disable WMF loader when source is cleared
+            wmfReady = false
         }
     }
 }

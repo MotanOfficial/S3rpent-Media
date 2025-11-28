@@ -27,6 +27,7 @@ ApplicationWindow {
     property bool isGif: false
     property bool isAudio: false
     property bool isMarkdown: false
+    property bool isText: false
     property real zoomFactor: 1.0
     property real panX: 0
     property real panY: 0
@@ -60,13 +61,13 @@ ApplicationWindow {
     property string pendingLoadType: ""
 
     function adjustZoom(delta) {
-        if (currentImage === "" || isVideo || isAudio || isMarkdown)
+        if (currentImage === "" || isVideo || isAudio || isMarkdown || isText)
             return;
         imageViewer.adjustZoom(delta);
     }
 
     function resetView() {
-        if (!isVideo && !isAudio && !isMarkdown) {
+        if (!isVideo && !isAudio && !isMarkdown && !isText) {
             imageViewer.resetView()
         }
     }
@@ -78,8 +79,8 @@ ApplicationWindow {
             return
         }
 
-        if (window.isVideo || window.isMarkdown) {
-            // Videos and markdown don't need pan clamping
+        if (window.isVideo || window.isMarkdown || window.isText) {
+            // Videos, markdown, and text don't need pan clamping
                 panX = 0
                 panY = 0
                 return
@@ -164,6 +165,110 @@ ApplicationWindow {
         const path = url.toString().toLowerCase()
         return path.endsWith(".md") || path.endsWith(".markdown") || path.endsWith(".mdown") ||
                path.endsWith(".mkd") || path.endsWith(".mkdn")
+    }
+    
+    function checkIfText(url) {
+        if (!url || url === "")
+            return false
+        const path = url.toString().toLowerCase()
+        // Plain text
+        if (path.endsWith(".txt") || path.endsWith(".log") || path.endsWith(".nfo"))
+            return true
+        // Config files
+        if (path.endsWith(".ini") || path.endsWith(".cfg") || path.endsWith(".conf") ||
+            path.endsWith(".env") || path.endsWith(".properties"))
+            return true
+        // Data formats
+        if (path.endsWith(".json") || path.endsWith(".xml") || path.endsWith(".yaml") ||
+            path.endsWith(".yml") || path.endsWith(".csv") || path.endsWith(".toml"))
+            return true
+        // Web development
+        if (path.endsWith(".html") || path.endsWith(".htm") || path.endsWith(".css") ||
+            path.endsWith(".scss") || path.endsWith(".sass") || path.endsWith(".less") ||
+            path.endsWith(".js") || path.endsWith(".jsx") || path.endsWith(".ts") ||
+            path.endsWith(".tsx") || path.endsWith(".vue") || path.endsWith(".svelte"))
+            return true
+        // C/C++
+        if (path.endsWith(".c") || path.endsWith(".cpp") || path.endsWith(".cc") ||
+            path.endsWith(".cxx") || path.endsWith(".h") || path.endsWith(".hpp") ||
+            path.endsWith(".hxx") || path.endsWith(".hh"))
+            return true
+        // Qt/QML
+        if (path.endsWith(".qml") || path.endsWith(".qrc") || path.endsWith(".pro") ||
+            path.endsWith(".pri") || path.endsWith(".ui"))
+            return true
+        // Python
+        if (path.endsWith(".py") || path.endsWith(".pyw") || path.endsWith(".pyx") ||
+            path.endsWith(".pyi") || path.endsWith(".pyd"))
+            return true
+        // Java/Kotlin
+        if (path.endsWith(".java") || path.endsWith(".kt") || path.endsWith(".kts") ||
+            path.endsWith(".gradle"))
+            return true
+        // C#/F#
+        if (path.endsWith(".cs") || path.endsWith(".fs") || path.endsWith(".csproj") ||
+            path.endsWith(".sln"))
+            return true
+        // Ruby
+        if (path.endsWith(".rb") || path.endsWith(".erb") || path.endsWith(".rake") ||
+            path.endsWith(".gemspec"))
+            return true
+        // Go
+        if (path.endsWith(".go") || path.endsWith(".mod") || path.endsWith(".sum"))
+            return true
+        // Rust
+        if (path.endsWith(".rs") || path.endsWith(".toml"))
+            return true
+        // PHP
+        if (path.endsWith(".php") || path.endsWith(".phtml"))
+            return true
+        // Shell/Scripts
+        if (path.endsWith(".sh") || path.endsWith(".bash") || path.endsWith(".zsh") ||
+            path.endsWith(".fish") || path.endsWith(".bat") || path.endsWith(".cmd") ||
+            path.endsWith(".ps1") || path.endsWith(".psm1"))
+            return true
+        // SQL
+        if (path.endsWith(".sql") || path.endsWith(".sqlite"))
+            return true
+        // Swift/Objective-C
+        if (path.endsWith(".swift") || path.endsWith(".m") || path.endsWith(".mm"))
+            return true
+        // Lua
+        if (path.endsWith(".lua"))
+            return true
+        // Perl
+        if (path.endsWith(".pl") || path.endsWith(".pm"))
+            return true
+        // R
+        if (path.endsWith(".r") || path.endsWith(".rmd"))
+            return true
+        // Scala
+        if (path.endsWith(".scala") || path.endsWith(".sc"))
+            return true
+        // Dart
+        if (path.endsWith(".dart"))
+            return true
+        // Assembly
+        if (path.endsWith(".asm") || path.endsWith(".s"))
+            return true
+        // Makefiles and build
+        if (path.endsWith(".mk") || path.endsWith(".cmake") || path.endsWith(".ninja") ||
+            path.endsWith("makefile") || path.endsWith("cmakelists.txt"))
+            return true
+        // Docker
+        if (path.endsWith(".dockerfile") || path.endsWith("dockerfile") ||
+            path.endsWith(".dockerignore"))
+            return true
+        // Git
+        if (path.endsWith(".gitignore") || path.endsWith(".gitattributes") ||
+            path.endsWith(".gitmodules"))
+            return true
+        // Other
+        if (path.endsWith(".diff") || path.endsWith(".patch") || path.endsWith(".rst") ||
+            path.endsWith(".tex") || path.endsWith(".bib") || path.endsWith(".cls") ||
+            path.endsWith(".sty"))
+            return true
+        return false
     }
     
     function formatTime(ms) {
@@ -283,6 +388,7 @@ ApplicationWindow {
         isGif = checkIfGif(currentImage)
         isAudio = checkIfAudio(currentImage)
         isMarkdown = checkIfMarkdown(currentImage)
+        isText = checkIfText(currentImage)
         if (currentImage === "") {
             startLoadTimer("")
             return
@@ -293,10 +399,12 @@ ApplicationWindow {
             startLoadTimer("Audio")
         } else if (isMarkdown) {
             startLoadTimer("Markdown")
+        } else if (isText) {
+            startLoadTimer("Text")
         } else {
             startLoadTimer(isGif ? "GIF" : "Image")
         }
-        if (!isVideo && !isAudio && !isMarkdown) {
+        if (!isVideo && !isAudio && !isMarkdown && !isText) {
             updateAccentColor()
         } else if (isVideo) {
             // Stop audio if playing
@@ -312,7 +420,7 @@ ApplicationWindow {
                 extractAudioCoverArt()
                 getAudioFormatInfo(0) // Get sample rate only
             })
-        } else if (isMarkdown) {
+        } else if (isMarkdown || isText) {
             // Stop video and audio if they have a source and are playing
             if (videoPlayer && videoPlayer.source !== "") {
                 const state = videoPlayer.playbackState
@@ -693,6 +801,13 @@ ApplicationWindow {
                 list.push({ label: "Lines", value: lineCount })
                 list.push({ label: "Characters", value: charCount.toLocaleString() })
             }
+        } else if (window.isText) {
+            list.push({ label: "Media Type", value: "Text" })
+            if (textViewer.lineCount > 0) {
+                list.push({ label: "Lines", value: textViewer.lineCount.toLocaleString() })
+                list.push({ label: "Characters", value: textViewer.characterCount.toLocaleString() })
+                list.push({ label: "Status", value: textViewer.modified ? "Modified" : "Saved" })
+            }
         } else {
             list.push({ label: "Media Type", value: "Image" })
             if (imageViewer.paintedWidth > 0 && imageViewer.paintedHeight > 0) {
@@ -705,7 +820,7 @@ ApplicationWindow {
         }
         
         // View info (only for visual media)
-        if (!window.isAudio && !window.isMarkdown) {
+        if (!window.isAudio && !window.isMarkdown && !window.isText) {
             list.push({ label: "Zoom Level", value: (window.zoomFactor * 100).toFixed(1) + "%" })
         }
         
@@ -740,7 +855,7 @@ ApplicationWindow {
                         if (delta !== 0)
                             window.adjustZoom(delta)
                     }
-                    enabled: window.currentImage !== "" && !window.isVideo && !window.isAudio && !window.isMarkdown
+                    enabled: window.currentImage !== "" && !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText
                 }
 
                 TapHandler {
@@ -774,7 +889,7 @@ ApplicationWindow {
                     property real prevY: 0
                     target: null
                     acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad | PointerDevice.Stylus
-                    enabled: window.currentImage !== "" && !window.isVideo && !window.isAudio && !window.isMarkdown
+                    enabled: window.currentImage !== "" && !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText
                     onActiveChanged: {
                         prevX = translation.x
                         prevY = translation.y
@@ -807,13 +922,13 @@ ApplicationWindow {
                 ImageViewer {
                     id: imageViewer
                         anchors.fill: parent
-                    source: (!window.isVideo && !window.isAudio && !window.isMarkdown && window.currentImage !== "") ? window.currentImage : ""
+                    source: (!window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && window.currentImage !== "") ? window.currentImage : ""
                     isGif: window.isGif
                     zoomFactor: window.zoomFactor
                     panX: window.panX
                     panY: window.panY
                     accentColor: window.accentColor
-                    visible: !window.isVideo && !window.isAudio && !window.isMarkdown && window.currentImage !== ""
+                    visible: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && window.currentImage !== ""
                     
                     onImageReady: {
                                 window.updateAccentColor()
@@ -828,21 +943,21 @@ ApplicationWindow {
                         target: window
                         property: "zoomFactor"
                         value: imageViewer.zoomFactor
-                        when: !window.isVideo && !window.isAudio && !window.isMarkdown
+                        when: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText
                     }
                     
                     Binding {
                         target: window
                         property: "panX"
                         value: imageViewer.panX
-                        when: !window.isVideo && !window.isAudio && !window.isMarkdown
+                        when: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText
                     }
                     
                     Binding {
                         target: window
                         property: "panY"
                         value: imageViewer.panY
-                        when: !window.isVideo && !window.isAudio && !window.isMarkdown
+                        when: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText
                     }
                 }
 
@@ -954,6 +1069,71 @@ ApplicationWindow {
                         }
                     }
                 }
+                
+                // Text viewer component
+                TextViewer {
+                    id: textViewer
+                    anchors.fill: parent
+                    source: window.isText ? window.currentImage : ""
+                    accentColor: window.accentColor
+                    foregroundColor: window.foregroundColor
+                    visible: window.isText && window.currentImage !== ""
+                    
+                    onSaved: {
+                        saveToast.show("File saved successfully", false)
+                    }
+                    
+                    onSaveError: function(message) {
+                        saveToast.show(message, true)
+                    }
+                }
+
+                Connections {
+                    target: textViewer
+                    function onContentLoaded() {
+                        if (window.isText && textViewer.content !== "" && textViewer.source !== "") {
+                            window.logLoadDuration("Text ready", textViewer.source)
+                        }
+                    }
+                }
+                
+                // Save toast notification
+                Rectangle {
+                    id: saveToast
+                    anchors.bottom: parent.bottom
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottomMargin: 32
+                    width: toastText.width + 32
+                    height: 40
+                    radius: 20
+                    color: toastError ? Qt.rgba(200, 50, 50, 0.9) : Qt.rgba(50, 150, 50, 0.9)
+                    opacity: 0
+                    visible: opacity > 0
+                    z: 100
+                    
+                    property bool toastError: false
+                    
+                    function show(message, isError) {
+                        toastText.text = message
+                        toastError = isError
+                        toastAnimation.restart()
+                    }
+                    
+                    Text {
+                        id: toastText
+                        anchors.centerIn: parent
+                        color: "#ffffff"
+                        font.pixelSize: 14
+                        font.family: "Segoe UI"
+                    }
+                    
+                    SequentialAnimation {
+                        id: toastAnimation
+                        NumberAnimation { target: saveToast; property: "opacity"; to: 1; duration: 200 }
+                        PauseAnimation { duration: 2000 }
+                        NumberAnimation { target: saveToast; property: "opacity"; to: 0; duration: 300 }
+                    }
+                }
 
                 Rectangle {
                     anchors.fill: parent
@@ -996,11 +1176,18 @@ ApplicationWindow {
         title: qsTr("Select media")
         fileMode: FileDialog.OpenFile
         nameFilters: [
-            qsTr("All Media (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.mp4 *.avi *.mov *.mkv *.webm *.m4v *.mp3 *.wav *.flac *.ogg *.aac *.m4a *.wma *.opus *.md *.markdown)"),
+            qsTr("All Supported (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.mp4 *.avi *.mov *.mkv *.webm *.m4v *.mp3 *.wav *.flac *.ogg *.aac *.m4a *.wma *.opus *.md *.markdown *.txt *.log *.json *.xml *.yaml *.yml *.csv *.html *.css *.js *.ts *.cpp *.c *.h *.hpp *.py *.java *.qml *.rs *.go *.rb *.php *.sh *.sql)"),
             qsTr("Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"),
             qsTr("Videos (*.mp4 *.avi *.mov *.mkv *.webm *.m4v *.flv *.wmv *.mpg *.mpeg *.3gp)"),
             qsTr("Audio (*.mp3 *.wav *.flac *.ogg *.aac *.m4a *.wma *.opus *.mp2 *.mp1 *.amr)"),
             qsTr("Markdown (*.md *.markdown *.mdown *.mkd *.mkdn)"),
+            qsTr("Code - Web (*.html *.htm *.css *.scss *.sass *.less *.js *.jsx *.ts *.tsx *.vue *.svelte *.json)"),
+            qsTr("Code - C/C++/Qt (*.c *.cpp *.cc *.cxx *.h *.hpp *.hxx *.qml *.qrc *.pro *.pri *.ui)"),
+            qsTr("Code - Python (*.py *.pyw *.pyx *.pyi)"),
+            qsTr("Code - Java/Kotlin (*.java *.kt *.kts *.gradle)"),
+            qsTr("Code - Other (*.rs *.go *.rb *.php *.swift *.cs *.fs *.scala *.lua *.pl *.r *.dart *.sh *.bat *.ps1 *.sql)"),
+            qsTr("Config (*.ini *.cfg *.conf *.env *.yaml *.yml *.toml *.xml *.properties)"),
+            qsTr("Text (*.txt *.log *.nfo *.csv *.diff *.patch)"),
             qsTr("All files (*)")
         ]
         onAccepted: window.currentImage = selectedFile

@@ -578,3 +578,25 @@ QString ColorUtils::readTextFile(const QUrl &fileUrl) const
     return content;
 }
 
+bool ColorUtils::writeTextFile(const QUrl &fileUrl, const QString &content) const
+{
+    const QString localPath = fileUrl.isLocalFile()
+            ? fileUrl.toLocalFile()
+            : fileUrl.toString(QUrl::PreferLocalFile);
+
+    if (localPath.isEmpty())
+        return false;
+
+    QFile file(localPath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
+        return false;
+
+    QTextStream out(&file);
+    out.setEncoding(QStringConverter::Utf8);
+    out << content;
+    file.close();
+
+    qDebug() << "[TextViewer] Saved file:" << localPath;
+    return true;
+}
+

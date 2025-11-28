@@ -59,6 +59,7 @@ qt_add_qml_module(apps3rp3nt_media
         AudioControls.qml
         MarkdownViewer.qml
         AudioVisualizerView.qml
+        TextViewer.qml
 )
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.

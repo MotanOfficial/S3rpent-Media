@@ -19,6 +19,7 @@ public:
     Q_INVOKABLE QUrl fixVideoFile(const QUrl &videoUrl) const;
     Q_INVOKABLE bool isFFmpegAvailable() const;
     Q_INVOKABLE QString readTextFile(const QUrl &fileUrl) const;
+    Q_INVOKABLE bool writeTextFile(const QUrl &fileUrl, const QString &content) const;
 };
 
 #endif // COLORUTILS_H
