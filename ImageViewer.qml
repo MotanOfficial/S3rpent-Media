@@ -9,16 +9,18 @@ Item {
     property real zoomFactor: 1.0
     property real panX: 0
     property real panY: 0
+    property int rotation: 0  // Rotation in degrees (0, 90, 180, 270)
     property color accentColor: "#121216"
     
     signal imageReady()
     signal paintedSizeChanged()
     
+    
     function adjustZoom(delta) {
         if (source === "")
             return;
         const factor = Math.pow(1.0015, delta);
-        zoomFactor = Math.max(0.25, Math.min(zoomFactor * factor, 8.0));
+        zoomFactor = Math.max(0.1, Math.min(zoomFactor * factor, 10.0));
         clampPan();
     }
     
@@ -26,6 +28,64 @@ Item {
         zoomFactor = 1.0
         panX = 0
         panY = 0
+        rotation = 0
+    }
+    
+    function fitToWindow() {
+        // When rotated 90 or 270 degrees, we need to adjust zoom to account for aspect ratio swap
+        if (rotation === 90 || rotation === 270) {
+            // Calculate the zoom needed to fit the rotated image
+            const imgW = paintedWidth
+            const imgH = paintedHeight
+            const containerW = mediaContainer.width
+            const containerH = mediaContainer.height
+            
+            if (imgW > 0 && imgH > 0 && containerW > 0 && containerH > 0) {
+                // After 90/270 rotation, width becomes height and vice versa
+                // We need to scale so the rotated image fits
+                const rotatedFitW = containerW / imgH  // rotated width (original height) fits container width
+                const rotatedFitH = containerH / imgW  // rotated height (original width) fits container height
+                const scaleFactor = Math.min(rotatedFitW, rotatedFitH)
+                
+                // The base zoom (1.0) already fits the unrotated image, so we adjust
+                const baseFitW = containerW / imgW
+                const baseFitH = containerH / imgH
+                const baseScale = Math.min(baseFitW, baseFitH)
+                
+                zoomFactor = scaleFactor / baseScale
+            } else {
+                zoomFactor = 1.0
+            }
+        } else {
+            zoomFactor = 1.0
+        }
+        panX = 0
+        panY = 0
+        clampPan()
+    }
+    
+    function actualSize() {
+        // Calculate zoom needed to show image at 100% (1 image pixel = 1 screen pixel)
+        if (source === "" || paintedWidth === 0 || sourceWidth === 0)
+            return
+        
+        // At zoomFactor 1.0, paintedWidth is the fitted size
+        // We want sourceWidth to equal the displayed size
+        const actualZoom = sourceWidth / paintedWidth
+        zoomFactor = Math.max(0.1, Math.min(actualZoom, 10.0))
+        panX = 0
+        panY = 0
+        clampPan()
+    }
+    
+    function rotateLeft() {
+        rotation = (rotation - 90 + 360) % 360
+        fitToWindow()
+    }
+    
+    function rotateRight() {
+        rotation = (rotation + 90) % 360
+        fitToWindow()
     }
     
     function clampPan() {
@@ -87,6 +147,11 @@ Item {
                 origin.y: height / 2
                 xScale: zoomFactor
                 yScale: zoomFactor
+            },
+            Rotation {
+                origin.x: mediaContainer.width / 2
+                origin.y: mediaContainer.height / 2
+                angle: imageViewer.rotation
             }
         ]
         
@@ -95,8 +160,9 @@ Item {
             anchors.fill: parent
             fillMode: Image.PreserveAspectFit
             asynchronous: true
-            cache: false
+            cache: true  // Enable caching for faster re-loads
             smooth: true
+            mipmap: true  // Enable mipmapping for better scaled image quality
             visible: !imageViewer.isGif && imageViewer.source !== ""
             source: (!imageViewer.isGif && imageViewer.source !== "") ? imageViewer.source : ""
             onStatusChanged: {
@@ -120,7 +186,7 @@ Item {
             anchors.fill: parent
             fillMode: AnimatedImage.PreserveAspectFit
             asynchronous: true
-            cache: false
+            cache: true  // Enable caching for faster re-loads
             smooth: true
             visible: imageViewer.isGif && imageViewer.source !== ""
             source: (imageViewer.isGif && imageViewer.source !== "") ? imageViewer.source : ""
@@ -145,6 +211,8 @@ Item {
     // Expose image properties for metadata
     property int paintedWidth: isGif ? animatedGif.paintedWidth : photo.paintedWidth
     property int paintedHeight: isGif ? animatedGif.paintedHeight : photo.paintedHeight
+    property int sourceWidth: isGif ? animatedGif.sourceSize.width : photo.sourceSize.width
+    property int sourceHeight: isGif ? animatedGif.sourceSize.height : photo.sourceSize.height
     property int frameCount: isGif ? animatedGif.frameCount : 0
     property int currentFrame: isGif ? animatedGif.currentFrame : 0
     property int status: isGif ? animatedGif.status : photo.status

@@ -54,47 +54,47 @@ Item {
         sourceComponent: S3rp3ntMedia.WMFVideoPlayer {
             id: wmfPlayerInstance
             source: videoPlayer.source
-            // Don't bind volume initially - set it manually after Settings loads
-            videoSink: videoDisplay.videoSink
-            
-            Component.onCompleted: {
-                // Set volume from videoPlayer after Settings has loaded
-                // This prevents the binding from setting it to 1.0 before Settings loads
-                volume = videoPlayer.volume
-                console.log("[VideoPlayer] wmfPlayer onCompleted: Set volume to", volume)
-            }
-            
-            onDurationChanged: {
+        // Don't bind volume initially - set it manually after Settings loads
+        videoSink: videoDisplay.videoSink
+        
+        Component.onCompleted: {
+            // Set volume from videoPlayer after Settings has loaded
+            // This prevents the binding from setting it to 1.0 before Settings loads
+            volume = videoPlayer.volume
+            console.log("[VideoPlayer] wmfPlayer onCompleted: Set volume to", volume)
+        }
+        
+        onDurationChanged: {
                 if (duration > 0) {
                     console.log("[WMF] Duration available:", duration, "ms")
-                    // Ensure volume is synced after video is loaded
+                // Ensure volume is synced after video is loaded
                     if (Math.abs(volume - videoPlayer.volume) > 0.001) {
-                        console.log("[WMF] Syncing volume:", videoPlayer.volume, "-> wmfPlayer")
+                    console.log("[WMF] Syncing volume:", videoPlayer.volume, "-> wmfPlayer")
                         volume = videoPlayer.volume
-                    }
-                    videoPlayer.durationAvailable()
-                    // Don't trigger auto-fix for WMF - it handles problematic videos better
-                    console.log("[WMF] Using WMF player - no auto-fix needed")
                 }
+                    videoPlayer.durationAvailable()
+                // Don't trigger auto-fix for WMF - it handles problematic videos better
+                console.log("[WMF] Using WMF player - no auto-fix needed")
             }
-            
-            onPlaybackStateChanged: {
+        }
+        
+        onPlaybackStateChanged: {
                 videoPlayer.playbackStateUpdated()
                 if (playbackState === 1) { // Playing
                     videoPlayer.showControls = true
-                    controlsHideTimer.start()
-                } else {
+                controlsHideTimer.start()
+            } else {
                     videoPlayer.showControls = true
-                    controlsHideTimer.stop()
-                }
+                controlsHideTimer.stop()
             }
-            
-            onErrorOccurred: function(error, errorString) {
-                console.error("[WMF] Error occurred:", error, errorString)
-                // Fallback to MediaPlayer on error
-                if (videoPlayer.useWMF) {
-                    console.log("[WMF] Falling back to MediaPlayer")
-                    videoPlayer.useWMF = false
+        }
+        
+        onErrorOccurred: function(error, errorString) {
+            console.error("[WMF] Error occurred:", error, errorString)
+            // Fallback to MediaPlayer on error
+            if (videoPlayer.useWMF) {
+                console.log("[WMF] Falling back to MediaPlayer")
+                videoPlayer.useWMF = false
                 }
             }
         }

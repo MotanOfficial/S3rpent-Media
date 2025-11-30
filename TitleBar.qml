@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import Qt5Compat.GraphicalEffects
 
 Rectangle {
     id: titleBar
@@ -78,13 +79,18 @@ Rectangle {
                 border.color: Qt.darker(accentColor,
                                          metadataHover.hovered ? 1.3 : 1.1)
                 visible: hasMedia
-                Behavior on color { ColorAnimation { duration: 120 } }
-                Behavior on border.color { ColorAnimation { duration: 120 } }
-                Text {
+                Image {
+                    id: metadataIcon
                     anchors.centerIn: parent
-                    text: "\u2139"
+                    source: "qrc:/qlementine/icons/16/misc/info.svg"
+                    sourceSize: Qt.size(16, 16)
+                    visible: false
+                }
+                ColorOverlay {
+                    anchors.fill: metadataIcon
+                    source: metadataIcon
                     color: foregroundColor
-                    font.pixelSize: 18
+                    opacity: 0.9
                 }
                 TapHandler {
                     id: metadataTap
@@ -111,13 +117,18 @@ Rectangle {
                           : Qt.darker(accentColor, 1.05))
                 border.color: Qt.darker(accentColor,
                                          settingsHover.hovered ? 1.3 : 1.1)
-                Behavior on color { ColorAnimation { duration: 120 } }
-                Behavior on border.color { ColorAnimation { duration: 120 } }
-                Text {
+                Image {
+                    id: settingsIcon
                     anchors.centerIn: parent
-                    text: "\u2699"
+                    source: "qrc:/qlementine/icons/16/navigation/settings.svg"
+                    sourceSize: Qt.size(16, 16)
+                    visible: false
+                }
+                ColorOverlay {
+                    anchors.fill: settingsIcon
+                    source: settingsIcon
                     color: foregroundColor
-                    font.pixelSize: 18
+                    opacity: 0.9
                 }
                 TapHandler {
                     id: settingsTap
@@ -144,13 +155,18 @@ Rectangle {
                           : Qt.darker(accentColor, 1.15))
                 border.color: Qt.darker(accentColor,
                                          minimizeHover.hovered ? 1.45 : 1.2)
-                Behavior on color { ColorAnimation { duration: 120 } }
-                Behavior on border.color { ColorAnimation { duration: 120 } }
-                Text {
+                Image {
+                    id: minimizeIcon
                     anchors.centerIn: parent
-                    text: "\u2212"
+                    source: "qrc:/qlementine/icons/16/action/windows-minimize.svg"
+                    sourceSize: Qt.size(16, 16)
+                    visible: false
+                }
+                ColorOverlay {
+                    anchors.fill: minimizeIcon
+                    source: minimizeIcon
                     color: foregroundColor
-                    font.pixelSize: 18
+                    opacity: 0.9
                 }
                 TapHandler {
                     id: minimizeTap
@@ -177,17 +193,24 @@ Rectangle {
                           : Qt.darker(accentColor, 1.15))
                 border.color: Qt.darker(accentColor,
                                          maximizeHover.hovered ? 1.45 : 1.2)
-                Behavior on color { ColorAnimation { duration: 120 } }
-                Behavior on border.color { ColorAnimation { duration: 120 } }
                 
                 property bool isMaximized: window ? window.visibility === Window.Maximized : false
                 
-                Text {
-                    id: maximizeIcon
+                Image {
+                    id: maximizeIconImg
                     anchors.centerIn: parent
-                    text: maximizeButton.isMaximized ? "\u2750" : "\u25A1"
+                    source: maximizeButton.isMaximized 
+                            ? "qrc:/qlementine/icons/16/action/windows-unmaximize.svg"
+                            : "qrc:/qlementine/icons/16/action/windows-maximize.svg"
+                    sourceSize: Qt.size(16, 16)
+                    visible: false
+                }
+                ColorOverlay {
+                    id: maximizeIcon
+                    anchors.fill: maximizeIconImg
+                    source: maximizeIconImg
                     color: foregroundColor
-                    font.pixelSize: 16
+                    opacity: 0.9
                 }
                 TapHandler {
                     id: maximizeTap
@@ -214,13 +237,18 @@ Rectangle {
                           : Qt.darker(accentColor, 1.2))
                 border.color: Qt.darker(accentColor,
                                          closeHover.hovered ? 1.55 : 1.25)
-                Behavior on color { ColorAnimation { duration: 120 } }
-                Behavior on border.color { ColorAnimation { duration: 120 } }
-                Text {
+                Image {
+                    id: closeIcon
                     anchors.centerIn: parent
-                    text: "\u00D7"
+                    source: "qrc:/qlementine/icons/16/action/windows-close.svg"
+                    sourceSize: Qt.size(16, 16)
+                    visible: false
+                }
+                ColorOverlay {
+                    anchors.fill: closeIcon
+                    source: closeIcon
                     color: foregroundColor
-                    font.pixelSize: 18
+                    opacity: 0.9
                 }
                 TapHandler {
                     id: closeTap

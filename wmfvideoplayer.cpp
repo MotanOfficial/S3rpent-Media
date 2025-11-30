@@ -23,6 +23,8 @@
 #include <QElapsedTimer>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QDateTime>
+#include <cmath>
 
 WMFVideoPlayer::WMFVideoPlayer(QObject *parent)
     : QObject(parent)
@@ -43,6 +45,7 @@ WMFVideoPlayer::WMFVideoPlayer(QObject *parent)
     , m_audioOutput(nullptr)
     , m_ffmpegProcess(nullptr)
     , m_needsSpecialHandling(false)
+    , m_lastSyncTime(0)
 {
     // Load saved volume from settings
     QSettings settings;
@@ -214,58 +217,31 @@ void WMFVideoPlayer::setupMediaPlayer()
             emit durationChanged();
         }
         
-        // If we have both durations and they differ, adjust video playback rate
-        // This helps sync video with audio when container timestamps are broken
+        // Adjust video playback rate - use square root of ratio for smoother adjustment
+        // Full ratio (2x) is too fast, 1x is too slow, sqrt gives middle ground (~1.4x for 2x ratio)
         if (m_duration > 0 && m_containerDuration > 0 && m_containerDuration != m_duration && 
             oldContainerDuration != m_containerDuration && m_needsSpecialHandling) {
-            double rateRatio = (double)m_containerDuration / (double)m_duration;
-            // Set playback rate to make video play at correct speed relative to audio
-            // If container is 2x longer, we need to play video 2x faster
-            m_mediaPlayer->setPlaybackRate(rateRatio);
-            qDebug() << "[MediaPlayer] Container duration:" << m_containerDuration << "ms != actual audio duration:" << m_duration << "ms";
-            qDebug() << "[MediaPlayer] Setting video playback rate to" << rateRatio << "x to sync with audio";
+            double fullRatio = (double)m_containerDuration / (double)m_duration;
+            double adjustedRate = sqrt(fullRatio); // e.g., sqrt(2) ≈ 1.41
+            m_mediaPlayer->setPlaybackRate(adjustedRate);
+            qDebug() << "[MediaPlayer] Container:" << m_containerDuration << "ms, Audio:" << m_duration << "ms";
+            qDebug() << "[MediaPlayer] Playback rate:" << adjustedRate << "x";
         } else if (m_containerDuration > 0 && !m_needsSpecialHandling) {
             qDebug() << "[MediaPlayer] Normal video - using QMediaPlayer audio (container duration:" << m_containerDuration << "ms)";
         }
     });
     
     connect(m_mediaPlayer, &QMediaPlayer::positionChanged, this, [this](qint64 position) {
-        // Calculate actual position from audio (master timeline) only if special handling is needed
-        // Otherwise use QMediaPlayer's position
+        // Use audio position as the master timeline for special handling videos
         int newPosition = (int)position;
         
         if (m_needsSpecialHandling) {
             int audioPosition = calculateAudioPosition();
             newPosition = audioPosition;
             
-            // If audio is not available yet, fall back to video position
+            // Fall back to video position if audio not ready
             if (!m_audioDecoded || m_decodedAudioData.isEmpty()) {
                 newPosition = (int)position;
-            }
-        }
-        
-        // Sync video to audio position by seeking (backup method if playback rate doesn't work perfectly)
-        // Only do this if special handling is needed
-        if (m_needsSpecialHandling && m_audioDecoded && !m_decodedAudioData.isEmpty() && m_playbackState == 1 && 
-            m_containerDuration > 0 && m_duration > 0 && m_containerDuration != m_duration) {
-            // Calculate ratio: container_duration / actual_duration
-            // This tells us how to map audio position to container position
-            int audioPosition = calculateAudioPosition();
-            double ratio = (double)m_containerDuration / (double)m_duration;
-            int targetVideoPosition = (int)(audioPosition * ratio);
-            
-            // Only seek if video is significantly out of sync (more than 800ms difference)
-            // Increased threshold to reduce constant seeking and logging
-            int videoPosition = (int)position;
-            int syncDifference = qAbs(videoPosition - targetVideoPosition);
-            if (syncDifference > 800) {
-                // Seek video to match audio position (accounting for container/actual ratio)
-                m_mediaPlayer->setPosition(targetVideoPosition);
-                // Only log occasionally to reduce noise (every 2 seconds of playback)
-                static int syncLogCounter = 0;
-                if (syncLogCounter++ % 20 == 0) { // Log every 20th sync (roughly every 2s at 100ms intervals)
-                    qDebug() << "[MediaPlayer] Syncing video: audio pos" << newPosition << "ms -> video pos" << targetVideoPosition << "ms (ratio:" << ratio << ", diff:" << syncDifference << "ms)";
-                }
             }
         }
         
@@ -302,24 +278,7 @@ void WMFVideoPlayer::updatePosition()
     if (m_playbackState == 1) {
         int audioPosition = calculateAudioPosition();
         
-        // Sync video to audio position continuously (backup sync method)
-        // Only do this if special handling is needed
-        if (m_needsSpecialHandling && m_audioDecoded && !m_decodedAudioData.isEmpty() && 
-            m_containerDuration > 0 && m_duration > 0 && m_containerDuration != m_duration) {
-            // Calculate ratio and map audio position to container position
-            double ratio = (double)m_containerDuration / (double)m_duration;
-            int targetVideoPosition = (int)(audioPosition * ratio);
-            
-            // Get current video position
-            qint64 currentVideoPos = m_mediaPlayer ? m_mediaPlayer->position() : 0;
-            int syncDifference = qAbs((int)currentVideoPos - targetVideoPosition);
-            
-            // Seek video if significantly out of sync (more than 800ms difference)
-            // Increased threshold to reduce constant seeking
-            if (syncDifference > 800 && m_mediaPlayer) {
-                m_mediaPlayer->setPosition(targetVideoPosition);
-            }
-        }
+        // No dynamic sync - playback rate is set once at start
         
         // Update position from audio
         if (audioPosition != m_position) {
@@ -508,11 +467,12 @@ void WMFVideoPlayer::detectSpecialHandling()
         m_decodedAudioData = savedAudioData;
         qDebug() << "[MediaPlayer] Audio sink setup complete, audioSink:" << (m_audioSink != nullptr) << ", audioDecoded restored:" << m_audioDecoded;
         
-        // Set video playback rate to sync with audio
-        if (m_mediaPlayer) {
-            double rateRatio = (double)m_containerDuration / (double)m_duration;
-            m_mediaPlayer->setPlaybackRate(rateRatio);
-            qDebug() << "[MediaPlayer] Set video playback rate to" << rateRatio << "x to sync with audio";
+        // Set adjusted playback rate
+        if (m_mediaPlayer && m_containerDuration > 0 && m_duration > 0 && m_containerDuration != m_duration) {
+            double fullRatio = (double)m_containerDuration / (double)m_duration;
+            double adjustedRate = sqrt(fullRatio);
+            m_mediaPlayer->setPlaybackRate(adjustedRate);
+            qDebug() << "[MediaPlayer] Set video playback rate to" << adjustedRate << "x";
         }
         
         emit durationChanged();

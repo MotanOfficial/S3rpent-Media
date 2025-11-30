@@ -7,6 +7,7 @@
 #include <QLoggingCategory>
 #include <QDebug>
 #include <QIcon>
+#include <QQuickStyle>
 
 #include "colorutils.h"
 #include "wmfvideoplayer.h"
@@ -50,6 +51,9 @@ int main(int argc, char *argv[])
     
     // Also set environment variable to suppress FFmpeg output
     qputenv("QT_LOGGING_RULES", "qt.multimedia.ffmpeg.*=false");
+    
+    // Use Basic style for Qt Quick Controls to allow full customization
+    QQuickStyle::setStyle("Basic");
 
     QQmlApplicationEngine engine;
     ColorUtils colorUtils;

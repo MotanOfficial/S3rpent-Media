@@ -38,7 +38,21 @@ Item {
     
     // Recalculate height when word wrap changes or width changes significantly
     onWordWrapChanged: recalculateContentHeight()
-    onWidthChanged: if (wordWrap && characterCount > 0) recalculateContentHeight()
+    onWidthChanged: {
+        if (width > 0 && characterCount > 0) {
+            recalculateContentHeight()
+        }
+        // Reload content if width wasn't available on initial load
+        if (width > 0 && source !== "" && content === "" && !_pendingReload) {
+            _pendingReload = true
+            Qt.callLater(function() {
+                _pendingReload = false
+                loadContent()
+            })
+        }
+    }
+    
+    property bool _pendingReload: false
     
     function recalculateContentHeight() {
         if (characterCount === 0) return
@@ -63,7 +77,7 @@ Item {
         }
         
         const fileContent = ColorUtils.readTextFile(source)
-        if (fileContent !== null && fileContent !== undefined) {
+        if (fileContent !== null && fileContent !== undefined && fileContent.length > 0) {
             content = fileContent
             characterCount = fileContent.length
             const lines = fileContent.split('\n')
@@ -104,9 +118,11 @@ Item {
             const effectiveLines = wordWrap ? Math.max(lineCount, estimatedWrappedLines) : lineCount
             fixedContentHeight = effectiveLines * lineHeight + 50
             
-            // Initial visible range
+            // Initial visible range - reset tracking to force refresh
             visibleChunkStart = 0
             visibleChunkEnd = Math.min(2, chunkData.length - 1)
+            visibleTextStartChunk = -1  // Force updateVisibleText to actually update
+            visibleTextEndChunk = -1
             updateVisibleText()
             
             contentLoaded()
@@ -416,8 +432,24 @@ Item {
         }
     }
     
-    onSourceChanged: loadContent()
-    Component.onCompleted: loadContent()
+    onSourceChanged: {
+        if (width > 0) {
+            loadContent()
+        }
+    }
+    
+    onVisibleChanged: {
+        // Reload when becoming visible if content wasn't loaded
+        if (visible && width > 0 && source !== "" && content === "") {
+            loadContent()
+        }
+    }
+    
+    Component.onCompleted: {
+        if (width > 0) {
+            loadContent()
+        }
+    }
     
     Rectangle {
         anchors.fill: parent
@@ -585,8 +617,8 @@ Item {
                 id: contentFlickable
                 width: parent.width - gutter.width
                 height: parent.height
-                // Horizontal scroll when word wrap is OFF
-                contentWidth: textViewer.wordWrap ? width : Math.max(width, textViewer.maxLineWidth + 40)
+                // Horizontal scroll when word wrap is OFF (only if content actually overflows)
+                contentWidth: textViewer.wordWrap ? width : (textViewer.maxLineWidth > width - 20 ? textViewer.maxLineWidth + 40 : width)
                 // Use fixed height OR the actual rendered height from TextEdit
                 contentHeight: Math.max(height, textViewer.fixedContentHeight)
                 clip: true
@@ -596,13 +628,51 @@ Item {
                 onContentXChanged: if (!textViewer.wordWrap) textViewer.updateVisibleChunks()
                 
                 ScrollBar.vertical: ScrollBar {
-                    active: true
-                    policy: ScrollBar.AsNeeded
+                    id: verticalScrollBar
+                    // Hide vertical scrollbar for single-line files when word wrap is off
+                    policy: (!textViewer.wordWrap && textViewer.lineCount <= 1) ? ScrollBar.AlwaysOff : ScrollBar.AsNeeded
+                    
+                    contentItem: Rectangle {
+                        implicitWidth: 8
+                        radius: 4
+                        color: verticalScrollBar.pressed 
+                            ? Qt.rgba(foregroundColor.r, foregroundColor.g, foregroundColor.b, 0.7)
+                            : verticalScrollBar.hovered 
+                                ? Qt.rgba(foregroundColor.r, foregroundColor.g, foregroundColor.b, 0.5)
+                                : Qt.rgba(foregroundColor.r, foregroundColor.g, foregroundColor.b, 0.3)
+                        
+                        Behavior on color { ColorAnimation { duration: 150 } }
+                    }
+                    
+                    background: Rectangle {
+                        implicitWidth: 12
+                        radius: 6
+                        color: Qt.rgba(0, 0, 0, 0.1)
+                    }
                 }
                 
                 ScrollBar.horizontal: ScrollBar {
-                    active: true
-                    policy: textViewer.wordWrap ? ScrollBar.AlwaysOff : ScrollBar.AsNeeded
+                    id: horizontalScrollBar
+                    // Only show when word wrap is off AND content actually overflows
+                    policy: (textViewer.wordWrap || contentFlickable.contentWidth <= contentFlickable.width) ? ScrollBar.AlwaysOff : ScrollBar.AsNeeded
+                    
+                    contentItem: Rectangle {
+                        implicitHeight: 8
+                        radius: 4
+                        color: horizontalScrollBar.pressed 
+                            ? Qt.rgba(foregroundColor.r, foregroundColor.g, foregroundColor.b, 0.7)
+                            : horizontalScrollBar.hovered 
+                                ? Qt.rgba(foregroundColor.r, foregroundColor.g, foregroundColor.b, 0.5)
+                                : Qt.rgba(foregroundColor.r, foregroundColor.g, foregroundColor.b, 0.3)
+                        
+                        Behavior on color { ColorAnimation { duration: 150 } }
+                    }
+                    
+                    background: Rectangle {
+                        implicitHeight: 12
+                        radius: 6
+                        color: Qt.rgba(0, 0, 0, 0.1)
+                    }
                 }
                 
                 // Single merged TextEdit for all visible chunks
@@ -612,8 +682,8 @@ Item {
                     // Position based on content before visible chunk
                     x: textViewer.getVisibleStartX()
                     y: textViewer.getVisibleStartY()
-                    // When word wrap is ON, limit to flickable width. When OFF, use implicit width
-                    width: textViewer.wordWrap ? contentFlickable.width - 20 : implicitWidth + 20
+                    // When word wrap is ON, limit to flickable width. When OFF, match content width
+                    width: textViewer.wordWrap ? contentFlickable.width - 20 : contentFlickable.contentWidth
                     
                     text: textViewer.visibleText
                     color: foregroundColor

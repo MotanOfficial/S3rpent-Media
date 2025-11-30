@@ -94,6 +94,7 @@ private:
     qint64 m_audioBytesWritten; // How many bytes of decoded audio we've written to QAudioSink
     QTimer *m_audioFeedTimer; // Timer to continuously feed audio to QAudioSink
     bool m_needsSpecialHandling; // Whether video has broken timestamps and needs FFmpeg audio extraction
+    qint64 m_lastSyncTime; // Timestamp of last video sync to debounce repeated syncs
     
     // Qt Multimedia for video
     QMediaPlayer *m_mediaPlayer;

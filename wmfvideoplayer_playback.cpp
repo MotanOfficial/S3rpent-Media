@@ -1,6 +1,8 @@
 #include "wmfvideoplayer.h"
 #include "wmfvideoplayer_helpers.h"
 #include <QDebug>
+#include <cmath>
+#include <QTimer>
 
 void WMFVideoPlayer::playbackWorker()
 {
@@ -198,14 +200,20 @@ void WMFVideoPlayer::seek(int position)
         position = m_duration;
     }
 
-    qDebug() << "[MediaPlayer] Seeking to position:" << position << "ms (correct duration:" << m_duration << "ms)";
+    // Audio seeks to position (1x)
+    // Video seeks using full ratio (container/audio duration)
+    int videoPosition = position;
     
-    // Seek Qt MediaPlayer video
-    if (m_mediaPlayer) {
-        m_mediaPlayer->setPosition(position);
+    if (m_needsSpecialHandling && m_containerDuration > 0 && m_duration > 0) {
+        // Use percentage-based: same % of audio = same % of container
+        double percent = (double)position / m_duration;
+        videoPosition = (int)(percent * m_containerDuration);
+        qDebug() << "[MediaPlayer] Seeking: audio" << position << "ms (" << (percent*100) << "%), video" << videoPosition << "ms";
+    } else {
+        qDebug() << "[MediaPlayer] Seeking to:" << position << "ms";
     }
     
-    // Update audio position to match video
+    // Update audio position (1x)
     if (m_audioSink && !m_decodedAudioData.isEmpty()) {
         QAudioFormat format = m_audioSink->format();
         int sampleRate = format.sampleRate();
@@ -224,6 +232,11 @@ void WMFVideoPlayer::seek(int position)
                 m_audioBytesWritten = m_decodedAudioData.size();
             }
         }
+    }
+    
+    // Seek video (with playback rate multiplier for special handling)
+    if (m_mediaPlayer) {
+        m_mediaPlayer->setPosition(videoPosition);
     }
     
     m_position = position;

@@ -5,6 +5,7 @@ project(s3rp3nt_media VERSION 0.1 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Multimedia Network)
+find_package(Qt6 OPTIONAL_COMPONENTS Pdf PdfQuick)
 
 # Note: FFmpeg is used via QProcess (subprocess) for audio decoding
 # This handles HE-AAC correctly by ignoring broken MP4 timestamps
@@ -42,11 +43,10 @@ qt_add_executable(apps3rp3nt_media
     customaudioprocessor.h
     customaudioplayer.cpp
     customaudioplayer.h
+    $<$<PLATFORM_ID:Windows>:app.rc>
 )
 
-qt_add_qml_module(apps3rp3nt_media
-    URI s3rp3nt_media
-    QML_FILES
+set(QML_FILES
         Main.qml
         ImageViewer.qml
         VideoPlayer.qml
@@ -57,9 +57,21 @@ qt_add_qml_module(apps3rp3nt_media
         WindowBackground.qml
         MediaViewer.qml
         AudioControls.qml
+        ImageControls.qml
         MarkdownViewer.qml
         AudioVisualizerView.qml
-        TextViewer.qml
+    TextViewer.qml
+    PdfViewer.qml
+)
+
+# Add PDF implementation only if PDF module is available
+if(TARGET Qt6::Pdf AND TARGET Qt6::PdfQuick)
+    list(APPEND QML_FILES PdfViewerImpl.qml)
+endif()
+
+qt_add_qml_module(apps3rp3nt_media
+    URI s3rp3nt_media
+    QML_FILES ${QML_FILES}
 )
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
@@ -70,13 +82,30 @@ set_target_properties(apps3rp3nt_media PROPERTIES
     MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
     MACOSX_BUNDLE TRUE
-    WIN32_EXECUTABLE FALSE
 )
+
+# Hide console window in Release mode (GUI app), show in Debug mode (for debugging)
+if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo" OR CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+    set_target_properties(apps3rp3nt_media PROPERTIES WIN32_EXECUTABLE TRUE)
+    message(STATUS "Building as GUI application (no console)")
+else()
+    set_target_properties(apps3rp3nt_media PROPERTIES WIN32_EXECUTABLE FALSE)
+    message(STATUS "Building as console application (debug mode)")
+endif()
 
 target_link_libraries(apps3rp3nt_media
     PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia Qt6::Network
     PRIVATE qlementine-icons
 )
+
+# Optional PDF support (not available for all platforms/compilers)
+if(TARGET Qt6::Pdf AND TARGET Qt6::PdfQuick)
+    target_link_libraries(apps3rp3nt_media PRIVATE Qt6::Pdf Qt6::PdfQuick)
+    target_compile_definitions(apps3rp3nt_media PRIVATE HAS_PDF_SUPPORT=1)
+    message(STATUS "PDF support enabled")
+else()
+    message(STATUS "PDF support disabled (Qt6::Pdf or Qt6::PdfQuick not found)")
+endif()
 
 # Windows-specific libraries for WASAPI audio loopback
 if(WIN32)

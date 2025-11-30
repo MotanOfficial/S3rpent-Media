@@ -28,6 +28,7 @@ ApplicationWindow {
     property bool isAudio: false
     property bool isMarkdown: false
     property bool isText: false
+    property bool isPdf: false
     property real zoomFactor: 1.0
     property real panX: 0
     property real panY: 0
@@ -54,20 +55,75 @@ ApplicationWindow {
     readonly property color fallbackAccent: "#121216"
     property color accentColor: fallbackAccent
     property color foregroundColor: "#f5f5f5"
+    
+    // Smooth transitions for dynamic accent color
+    Behavior on accentColor { ColorAnimation { duration: 300; easing.type: Easing.OutCubic } }
+    Behavior on foregroundColor { ColorAnimation { duration: 300; easing.type: Easing.OutCubic } }
+    
     property bool dynamicColoringEnabled: true
     property bool betaAudioProcessingEnabled: true
     property real loadStartTime: 0
     property url pendingLoadSource: ""
     property string pendingLoadType: ""
+    
+    // Image navigation properties
+    property var directoryImages: []
+    property int currentImageIndex: 0
+    property bool isImageType: !isVideo && !isAudio && !isMarkdown && !isText && !isPdf && currentImage.toString() !== ""
+    property bool _navigatingImages: false  // Flag to prevent re-scanning during navigation
+    property bool showImageControls: false  // Toggle for image controls visibility
 
     function adjustZoom(delta) {
-        if (currentImage === "" || isVideo || isAudio || isMarkdown || isText)
+        if (currentImage === "" || isVideo || isAudio || isMarkdown || isText || isPdf)
             return;
         imageViewer.adjustZoom(delta);
     }
+    
+    // Image navigation functions
+    function loadDirectoryImages(imageUrl) {
+        if (!imageUrl || imageUrl === "" || typeof ColorUtils === "undefined" || !ColorUtils.getImagesInDirectory)
+            return
+        
+        const images = ColorUtils.getImagesInDirectory(imageUrl)
+        if (images && images.length > 0) {
+            directoryImages = images
+            // Find current image index
+            const currentPath = imageUrl.toString()
+            for (let i = 0; i < images.length; i++) {
+                if (images[i].toString() === currentPath) {
+                    currentImageIndex = i
+                    break
+                }
+            }
+        } else {
+            directoryImages = [imageUrl]
+            currentImageIndex = 0
+        }
+    }
+    
+    function navigateToImage(index) {
+        if (directoryImages.length === 0) return
+        
+        // Wrap around navigation
+        if (index < 0) index = directoryImages.length - 1
+        if (index >= directoryImages.length) index = 0
+        
+        currentImageIndex = index
+        _navigatingImages = true  // Prevent re-scanning directory
+        currentImage = directoryImages[index]
+        _navigatingImages = false
+    }
+    
+    function nextImage() {
+        navigateToImage(currentImageIndex + 1)
+    }
+    
+    function previousImage() {
+        navigateToImage(currentImageIndex - 1)
+    }
 
     function resetView() {
-        if (!isVideo && !isAudio && !isMarkdown && !isText) {
+        if (!isVideo && !isAudio && !isMarkdown && !isText && !isPdf) {
             imageViewer.resetView()
         }
     }
@@ -79,8 +135,8 @@ ApplicationWindow {
             return
         }
 
-        if (window.isVideo || window.isMarkdown || window.isText) {
-            // Videos, markdown, and text don't need pan clamping
+        if (window.isVideo || window.isMarkdown || window.isText || window.isPdf) {
+            // Videos, markdown, text, and PDF don't need pan clamping
                 panX = 0
                 panY = 0
                 return
@@ -271,6 +327,13 @@ ApplicationWindow {
         return false
     }
     
+    function checkIfPdf(url) {
+        if (!url || url === "")
+            return false
+        const path = url.toString().toLowerCase()
+        return path.endsWith(".pdf")
+    }
+    
     function formatTime(ms) {
         if (!ms || ms <= 0) return "0:00"
         const totalSeconds = Math.floor(ms / 1000)
@@ -382,30 +445,44 @@ ApplicationWindow {
     }
 
     onCurrentImageChanged: {
-        useFallbackAccent()
         resetView()
         isVideo = checkIfVideo(currentImage)
         isGif = checkIfGif(currentImage)
         isAudio = checkIfAudio(currentImage)
         isMarkdown = checkIfMarkdown(currentImage)
         isText = checkIfText(currentImage)
+        isPdf = checkIfPdf(currentImage)
         if (currentImage === "") {
+            useFallbackAccent()
             startLoadTimer("")
             return
         }
         if (isVideo) {
+            useFallbackAccent()
             startLoadTimer("Video")
         } else if (isAudio) {
+            // Audio keeps color until cover art is detected
             startLoadTimer("Audio")
         } else if (isMarkdown) {
+            useFallbackAccent()
             startLoadTimer("Markdown")
         } else if (isText) {
+            useFallbackAccent()
             startLoadTimer("Text")
+        } else if (isPdf) {
+            useFallbackAccent()
+            startLoadTimer("PDF")
         } else {
+            // Images: keep previous color until new one is detected (smooth transition)
             startLoadTimer(isGif ? "GIF" : "Image")
         }
-        if (!isVideo && !isAudio && !isMarkdown && !isText) {
-            updateAccentColor()
+        if (!isVideo && !isAudio && !isMarkdown && !isText && !isPdf) {
+            // Don't call updateAccentColor here - it's called async in onImageReady
+            // Load all images from directory for navigation (only if not already navigating)
+            if (!_navigatingImages) {
+                loadDirectoryImages(currentImage)
+                showImageControls = false  // Hide controls when loading new image
+            }
         } else if (isVideo) {
             // Stop audio if playing
             audioPlayer.stop()
@@ -420,7 +497,7 @@ ApplicationWindow {
                 extractAudioCoverArt()
                 getAudioFormatInfo(0) // Get sample rate only
             })
-        } else if (isMarkdown || isText) {
+        } else if (isMarkdown || isText || isPdf) {
             // Stop video and audio if they have a source and are playing
             if (videoPlayer && videoPlayer.source !== "") {
                 const state = videoPlayer.playbackState
@@ -808,6 +885,13 @@ ApplicationWindow {
                 list.push({ label: "Characters", value: textViewer.characterCount.toLocaleString() })
                 list.push({ label: "Status", value: textViewer.modified ? "Modified" : "Saved" })
             }
+        } else if (window.isPdf) {
+            list.push({ label: "Media Type", value: "PDF Document" })
+            if (pdfViewer.isLoaded) {
+                list.push({ label: "Pages", value: pdfViewer.pageCount.toLocaleString() })
+                list.push({ label: "Current Page", value: pdfViewer.currentPage + " / " + pdfViewer.pageCount })
+                list.push({ label: "Zoom", value: Math.round(pdfViewer.zoomLevel * 100) + "%" })
+            }
         } else {
             list.push({ label: "Media Type", value: "Image" })
             if (imageViewer.paintedWidth > 0 && imageViewer.paintedHeight > 0) {
@@ -819,8 +903,8 @@ ApplicationWindow {
             }
         }
         
-        // View info (only for visual media)
-        if (!window.isAudio && !window.isMarkdown && !window.isText) {
+        // View info (only for visual media, excluding PDF which has its own zoom in metadata)
+        if (!window.isAudio && !window.isMarkdown && !window.isText && !window.isPdf) {
             list.push({ label: "Zoom Level", value: (window.zoomFactor * 100).toFixed(1) + "%" })
         }
         
@@ -855,14 +939,23 @@ ApplicationWindow {
                         if (delta !== 0)
                             window.adjustZoom(delta)
                     }
-                    enabled: window.currentImage !== "" && !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText
+                    enabled: window.currentImage.toString() !== "" && !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && !window.isPdf
                 }
 
                 TapHandler {
                     acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                     gesturePolicy: TapHandler.ReleaseWithinBounds
                     onDoubleTapped: window.resetView()
-                    enabled: window.currentImage !== "" && !window.isVideo
+                    onTapped: {
+                        // Toggle image controls on single tap
+                        if (window.isImageType && window.currentImage.toString() !== "") {
+                            window.showImageControls = !window.showImageControls
+                            if (window.showImageControls) {
+                                imageControlsHideTimer.restart()
+                            }
+                        }
+                    }
+                    enabled: window.currentImage.toString() !== "" && !window.isVideo
                 }
                 
                 TapHandler {
@@ -889,7 +982,7 @@ ApplicationWindow {
                     property real prevY: 0
                     target: null
                     acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad | PointerDevice.Stylus
-                    enabled: window.currentImage !== "" && !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText
+                    enabled: window.currentImage.toString() !== "" && !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && !window.isPdf
                     onActiveChanged: {
                         prevX = translation.x
                         prevY = translation.y
@@ -917,22 +1010,166 @@ ApplicationWindow {
                         }
                     }
                 }
+                
+                // Empty state placeholder
+                Column {
+                    id: emptyStatePlaceholder
+                    anchors.centerIn: parent
+                    spacing: 20
+                    visible: window.currentImage.toString() === "" && !window.showingSettings
+                    opacity: visible ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
+                    
+                    // Icon container with subtle glow
+                    Rectangle {
+                        width: 120
+                        height: 120
+                        radius: 60
+                        color: Qt.rgba(1, 1, 1, 0.05)
+                        border.width: 2
+                        border.color: Qt.rgba(1, 1, 1, 0.1)
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        
+                        // Decorative ring
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: 100
+                            height: 100
+                            radius: 50
+                            color: "transparent"
+                            border.width: 1
+                            border.color: Qt.rgba(1, 1, 1, 0.08)
+                        }
+                        
+                        Text {
+                            anchors.centerIn: parent
+                            text: "📁"
+                            font.pixelSize: 48
+                            opacity: 0.7
+                        }
+                    }
+                    
+                    // Main text
+                    Text {
+                        text: "No media loaded"
+                        font.pixelSize: 24
+                        font.weight: Font.Medium
+                        font.family: "Segoe UI"
+                        color: Qt.rgba(1, 1, 1, 0.8)
+                        anchors.horizontalCenter: parent.horizontalCenter
+                    }
+                    
+                    // Subtitle
+                    Text {
+                        text: "Drag & drop a file here to get started"
+                        font.pixelSize: 14
+                        font.family: "Segoe UI"
+                        color: Qt.rgba(1, 1, 1, 0.5)
+                        anchors.horizontalCenter: parent.horizontalCenter
+                    }
+                    
+                    // Or divider
+                    Row {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        spacing: 12
+                        
+                        Rectangle {
+                            width: 40
+                            height: 1
+                            color: Qt.rgba(1, 1, 1, 0.2)
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        
+                        Text {
+                            text: "or"
+                            font.pixelSize: 12
+                            font.family: "Segoe UI"
+                            color: Qt.rgba(1, 1, 1, 0.4)
+                        }
+                        
+                        Rectangle {
+                            width: 40
+                            height: 1
+                            color: Qt.rgba(1, 1, 1, 0.2)
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    
+                    // Open file button
+                    Rectangle {
+                        width: 160
+                        height: 40
+                        radius: 20
+                        color: openFileMouseArea.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : Qt.rgba(1, 1, 1, 0.1)
+                        border.width: 1
+                        border.color: Qt.rgba(1, 1, 1, 0.2)
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        
+                        Behavior on color { ColorAnimation { duration: 150 } }
+                        
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 8
+                            
+                            Text {
+                                text: "📂"
+                                font.pixelSize: 16
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            
+                            Text {
+                                text: "Browse files"
+                                font.pixelSize: 14
+                                font.family: "Segoe UI"
+                                font.weight: Font.Medium
+                                color: Qt.rgba(1, 1, 1, 0.9)
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                        
+                        MouseArea {
+                            id: openFileMouseArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: openDialog.open()
+                        }
+                    }
+                    
+                    // Supported formats hint
+                    Text {
+                        text: "Images • Videos • Audio • Documents"
+                        font.pixelSize: 11
+                        font.family: "Segoe UI"
+                        color: Qt.rgba(1, 1, 1, 0.3)
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        topPadding: 8
+                    }
+                }
 
                 // Image viewer component
                 ImageViewer {
                     id: imageViewer
                         anchors.fill: parent
-                    source: (!window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && window.currentImage !== "") ? window.currentImage : ""
+                    source: (!window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && !window.isPdf && window.currentImage !== "") ? window.currentImage : ""
                     isGif: window.isGif
                     zoomFactor: window.zoomFactor
                     panX: window.panX
                     panY: window.panY
                     accentColor: window.accentColor
-                    visible: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && window.currentImage !== ""
+                    visible: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && !window.isPdf && window.currentImage !== ""
                     
                     onImageReady: {
-                                window.updateAccentColor()
-                                window.logLoadDuration(window.isGif ? "GIF ready" : "Image ready", imageViewer.source)
+                        // Log duration FIRST so image appears immediately
+                        window.logLoadDuration(window.isGif ? "GIF ready" : "Image ready", imageViewer.source)
+                        // Then update accent color after a short delay (doesn't block image display)
+                        accentColorTimer.restart()
+                    }
+                    
+                    Timer {
+                        id: accentColorTimer
+                        interval: 50  // Small delay to let image render first
+                        onTriggered: window.updateAccentColor()
                     }
                     
                     onPaintedSizeChanged: {
@@ -943,21 +1180,186 @@ ApplicationWindow {
                         target: window
                         property: "zoomFactor"
                         value: imageViewer.zoomFactor
-                        when: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText
+                        when: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && !window.isPdf
                     }
                     
                     Binding {
                         target: window
                         property: "panX"
                         value: imageViewer.panX
-                        when: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText
+                        when: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && !window.isPdf
                     }
                     
                     Binding {
                         target: window
                         property: "panY"
                         value: imageViewer.panY
-                        when: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText
+                        when: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && !window.isPdf
+                    }
+                }
+                
+                // Image controls bar
+                ImageControls {
+                    id: imageControls
+                    anchors.bottom: parent.bottom
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottomMargin: 24
+                    width: Math.min(500, parent.width - 48)
+                    height: 48
+                    visible: window.isImageType && window.showImageControls && window.currentImage.toString() !== "" && !window.showingSettings && !window.showingMetadata
+                    z: 50
+                    
+                    currentIndex: window.currentImageIndex
+                    totalImages: window.directoryImages.length
+                    zoomFactor: window.zoomFactor
+                    accentColor: window.accentColor
+                    
+                    onPreviousClicked: {
+                        window.previousImage()
+                        imageControlsHideTimer.restart()
+                    }
+                    onNextClicked: {
+                        window.nextImage()
+                        imageControlsHideTimer.restart()
+                    }
+                    onZoomInClicked: {
+                        window.adjustZoom(100)
+                        imageControlsHideTimer.restart()
+                    }
+                    onZoomOutClicked: {
+                        window.adjustZoom(-100)
+                        imageControlsHideTimer.restart()
+                    }
+                    onFitToWindowClicked: {
+                        imageViewer.fitToWindow()
+                        imageControlsHideTimer.restart()
+                    }
+                    onActualSizeClicked: {
+                        imageViewer.actualSize()
+                        imageControlsHideTimer.restart()
+                    }
+                    onRotateLeftClicked: {
+                        imageViewer.rotateLeft()
+                        imageControlsHideTimer.restart()
+                    }
+                    onRotateRightClicked: {
+                        imageViewer.rotateRight()
+                        imageControlsHideTimer.restart()
+                    }
+                    
+                    // Fade in/out animation
+                    opacity: visible ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: 200 } }
+                }
+                
+                // Auto-hide timer for image controls
+                Timer {
+                    id: imageControlsHideTimer
+                    interval: 3000
+                    onTriggered: window.showImageControls = false
+                }
+                
+                // Pre-load next image for faster navigation
+                Image {
+                    id: preloadNext
+                    visible: false
+                    asynchronous: true
+                    cache: true
+                    source: {
+                        if (!window.isImageType || window.directoryImages.length <= 1) return ""
+                        const nextIndex = (window.currentImageIndex + 1) % window.directoryImages.length
+                        return window.directoryImages[nextIndex] || ""
+                    }
+                }
+                
+                // Pre-load previous image for faster navigation
+                Image {
+                    id: preloadPrev
+                    visible: false
+                    asynchronous: true
+                    cache: true
+                    source: {
+                        if (!window.isImageType || window.directoryImages.length <= 1) return ""
+                        const prevIndex = (window.currentImageIndex - 1 + window.directoryImages.length) % window.directoryImages.length
+                        return window.directoryImages[prevIndex] || ""
+                    }
+                }
+                
+                // Left navigation arrow
+                Rectangle {
+                    id: leftArrow
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.leftMargin: 12
+                    width: 32
+                    height: 48
+                    radius: 8
+                    color: leftArrowMouse.containsMouse 
+                           ? Qt.rgba(0, 0, 0, 0.7) 
+                           : Qt.rgba(0, 0, 0, 0.4)
+                    visible: window.isImageType && window.showImageControls && window.currentImage.toString() !== "" && window.directoryImages.length > 1 && !window.showingSettings && !window.showingMetadata
+                    opacity: leftArrowMouse.containsMouse ? 1 : 0.5
+                    z: 50
+                    
+                    Behavior on color { ColorAnimation { duration: 150 } }
+                    Behavior on opacity { NumberAnimation { duration: 150 } }
+                    
+                    Text {
+                        anchors.centerIn: parent
+                        text: "‹"
+                        color: "#ffffff"
+                        font.pixelSize: 24
+                        font.bold: true
+                    }
+                    
+                    MouseArea {
+                        id: leftArrowMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            window.previousImage()
+                            imageControlsHideTimer.restart()
+                        }
+                    }
+                }
+                
+                // Right navigation arrow
+                Rectangle {
+                    id: rightArrow
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.rightMargin: 12
+                    width: 32
+                    height: 48
+                    radius: 8
+                    color: rightArrowMouse.containsMouse 
+                           ? Qt.rgba(0, 0, 0, 0.7) 
+                           : Qt.rgba(0, 0, 0, 0.4)
+                    visible: window.isImageType && window.showImageControls && window.currentImage.toString() !== "" && window.directoryImages.length > 1 && !window.showingSettings && !window.showingMetadata
+                    opacity: rightArrowMouse.containsMouse ? 1 : 0.5
+                    z: 50
+                    
+                    Behavior on color { ColorAnimation { duration: 150 } }
+                    Behavior on opacity { NumberAnimation { duration: 150 } }
+                    
+                    Text {
+                        anchors.centerIn: parent
+                        text: "›"
+                        color: "#ffffff"
+                        font.pixelSize: 24
+                        font.bold: true
+                    }
+                    
+                    MouseArea {
+                        id: rightArrowMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            window.nextImage()
+                            imageControlsHideTimer.restart()
+                        }
                     }
                 }
 
@@ -1097,6 +1499,27 @@ ApplicationWindow {
                     }
                 }
                 
+                // PDF viewer component
+                PdfViewer {
+                    id: pdfViewer
+                    anchors.fill: parent
+                    source: window.isPdf ? window.currentImage : ""
+                    accentColor: window.accentColor
+                    foregroundColor: window.foregroundColor
+                    visible: window.isPdf && window.currentImage !== ""
+                    
+                    onLoaded: {
+                        window.logLoadDuration("PDF ready", pdfViewer.source)
+                        if (window.showingMetadata) {
+                            Qt.callLater(function() {
+                                if (metadataPopup) {
+                                    metadataPopup.metadataList = window.getMetadataList()
+                                }
+                            })
+                        }
+                    }
+                }
+                
                 // Save toast notification
                 Rectangle {
                     id: saveToast
@@ -1176,10 +1599,11 @@ ApplicationWindow {
         title: qsTr("Select media")
         fileMode: FileDialog.OpenFile
         nameFilters: [
-            qsTr("All Supported (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.mp4 *.avi *.mov *.mkv *.webm *.m4v *.mp3 *.wav *.flac *.ogg *.aac *.m4a *.wma *.opus *.md *.markdown *.txt *.log *.json *.xml *.yaml *.yml *.csv *.html *.css *.js *.ts *.cpp *.c *.h *.hpp *.py *.java *.qml *.rs *.go *.rb *.php *.sh *.sql)"),
+            qsTr("All Supported (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.mp4 *.avi *.mov *.mkv *.webm *.m4v *.mp3 *.wav *.flac *.ogg *.aac *.m4a *.wma *.opus *.md *.markdown *.txt *.log *.json *.xml *.yaml *.yml *.csv *.html *.css *.js *.ts *.cpp *.c *.h *.hpp *.py *.java *.qml *.rs *.go *.rb *.php *.sh *.sql *.pdf)"),
             qsTr("Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"),
             qsTr("Videos (*.mp4 *.avi *.mov *.mkv *.webm *.m4v *.flv *.wmv *.mpg *.mpeg *.3gp)"),
             qsTr("Audio (*.mp3 *.wav *.flac *.ogg *.aac *.m4a *.wma *.opus *.mp2 *.mp1 *.amr)"),
+            qsTr("PDF Documents (*.pdf)"),
             qsTr("Markdown (*.md *.markdown *.mdown *.mkd *.mkdn)"),
             qsTr("Code - Web (*.html *.htm *.css *.scss *.sass *.less *.js *.jsx *.ts *.tsx *.vue *.svelte *.json)"),
             qsTr("Code - C/C++/Qt (*.c *.cpp *.cc *.cxx *.h *.hpp *.hxx *.qml *.qrc *.pro *.pri *.ui)"),
@@ -1196,6 +1620,31 @@ ApplicationWindow {
     Shortcut {
         sequences: [ StandardKey.Open ]
         onActivated: openDialog.open()
+    }
+    
+    // Image navigation shortcuts
+    Shortcut {
+        sequence: "Left"
+        enabled: window.isImageType && window.directoryImages.length > 1
+        onActivated: window.previousImage()
+    }
+    
+    Shortcut {
+        sequence: "Right"
+        enabled: window.isImageType && window.directoryImages.length > 1
+        onActivated: window.nextImage()
+    }
+    
+    Shortcut {
+        sequence: "Home"
+        enabled: window.isImageType && window.directoryImages.length > 1
+        onActivated: window.navigateToImage(0)
+    }
+    
+    Shortcut {
+        sequence: "End"
+        enabled: window.isImageType && window.directoryImages.length > 1
+        onActivated: window.navigateToImage(window.directoryImages.length - 1)
     }
 
     Component.onCompleted: {

@@ -20,6 +20,12 @@ public:
     Q_INVOKABLE bool isFFmpegAvailable() const;
     Q_INVOKABLE QString readTextFile(const QUrl &fileUrl) const;
     Q_INVOKABLE bool writeTextFile(const QUrl &fileUrl, const QString &content) const;
+    Q_INVOKABLE QVariantList getImagesInDirectory(const QUrl &fileUrl) const;
+    
+    // File association functions
+    Q_INVOKABLE bool registerAsDefaultImageViewer() const;
+    Q_INVOKABLE void openDefaultAppsSettings() const;
+    Q_INVOKABLE QString getAppPath() const;
 };
 
 #endif // COLORUTILS_H

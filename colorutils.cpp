@@ -26,6 +26,15 @@
 #include <QProcess>
 #include <QDateTime>
 #include <QStandardPaths>
+#include <QSettings>
+#include <QCoreApplication>
+#include <QDesktopServices>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <shlobj.h>
+#include <shellapi.h>
+#endif
 
 namespace {
 constexpr int kSampleSize = 96;
@@ -598,5 +607,182 @@ bool ColorUtils::writeTextFile(const QUrl &fileUrl, const QString &content) cons
 
     qDebug() << "[TextViewer] Saved file:" << localPath;
     return true;
+}
+
+QVariantList ColorUtils::getImagesInDirectory(const QUrl &fileUrl) const
+{
+    QVariantList result;
+    
+    const QString localPath = fileUrl.isLocalFile()
+            ? fileUrl.toLocalFile()
+            : fileUrl.toString(QUrl::PreferLocalFile);
+
+    if (localPath.isEmpty())
+        return result;
+
+    QFileInfo fileInfo(localPath);
+    QDir dir = fileInfo.absoluteDir();
+    
+    if (!dir.exists())
+        return result;
+
+    // Image extensions to look for
+    QStringList imageExtensions;
+    imageExtensions << "*.jpg" << "*.jpeg" << "*.png" << "*.gif" << "*.bmp" 
+                    << "*.webp" << "*.svg" << "*.ico" << "*.tiff" << "*.tif"
+                    << "*.JPG" << "*.JPEG" << "*.PNG" << "*.GIF" << "*.BMP"
+                    << "*.WEBP" << "*.SVG" << "*.ICO" << "*.TIFF" << "*.TIF";
+
+    // Get all image files in the directory (unsorted, we'll sort manually)
+    QFileInfoList files = dir.entryInfoList(imageExtensions, QDir::Files);
+    
+    // Sort by modification time descending (newest first)
+    std::sort(files.begin(), files.end(), [](const QFileInfo &a, const QFileInfo &b) {
+        return a.lastModified() > b.lastModified();
+    });
+    
+    for (const QFileInfo &fi : files) {
+        result.append(QUrl::fromLocalFile(fi.absoluteFilePath()));
+    }
+
+    return result;
+}
+
+QString ColorUtils::getAppPath() const
+{
+    return QCoreApplication::applicationFilePath();
+}
+
+void ColorUtils::openDefaultAppsSettings() const
+{
+#ifdef Q_OS_WIN
+    // Open Windows Settings > Default Apps using ShellExecute for URI protocols
+    ShellExecuteW(NULL, L"open", L"ms-settings:defaultapps", NULL, NULL, SW_SHOWNORMAL);
+#elif defined(Q_OS_MACOS)
+    // On macOS, open System Preferences
+    QDesktopServices::openUrl(QUrl("x-apple.systempreferences:"));
+#else
+    // On Linux, try to open system settings
+    QDesktopServices::openUrl(QUrl("settings://"));
+#endif
+}
+
+bool ColorUtils::registerAsDefaultImageViewer() const
+{
+#ifdef Q_OS_WIN
+    QString appPath = QCoreApplication::applicationFilePath().replace("/", "\\");
+    
+    // appName MUST match the executable name for Windows to find it
+    QString appName = QFileInfo(appPath).baseName();  // e.g. "apps3rp3nt_media"
+    QString friendlyName = "S3rp3nt Media Viewer";
+    
+    // Define all supported file types organized by category
+    QStringList imageExtensions = {
+        ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ico", ".tiff", ".tif", ".svg"
+    };
+    
+    QStringList videoExtensions = {
+        ".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v", ".flv", ".wmv", ".mpg", ".mpeg", ".3gp"
+    };
+    
+    QStringList audioExtensions = {
+        ".mp3", ".wav", ".flac", ".ogg", ".aac", ".m4a", ".wma", ".opus", ".mp2", ".mp1", ".amr"
+    };
+    
+    QStringList documentExtensions = {
+        ".pdf", ".txt", ".log", ".nfo", ".csv", ".diff", ".patch",
+        ".md", ".markdown", ".mdown", ".mkd", ".mkdn"
+    };
+    
+    QStringList codeExtensions = {
+        // Web
+        ".html", ".htm", ".css", ".scss", ".sass", ".less", 
+        ".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte", ".json",
+        // C/C++/Qt
+        ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx", 
+        ".qml", ".qrc", ".pro", ".pri", ".ui",
+        // Python
+        ".py", ".pyw", ".pyx", ".pxd", ".pyi",
+        // Java/Kotlin
+        ".java", ".kt", ".kts", ".gradle",
+        // Other languages
+        ".rs", ".go", ".rb", ".php", ".swift", ".cs", ".fs", ".scala",
+        ".lua", ".pl", ".r", ".dart", ".sh", ".bat", ".ps1", ".sql",
+        // Config
+        ".ini", ".cfg", ".conf", ".env", ".yaml", ".yml", ".toml", ".xml", ".properties"
+    };
+    
+    // Create ProgIDs for each category
+    QString imageProgId = appName + ".Image";
+    QString videoProgId = appName + ".Video";
+    QString audioProgId = appName + ".Audio";
+    QString documentProgId = appName + ".Document";
+    QString codeProgId = appName + ".Code";
+    
+    // 1. Register all ProgIDs (defines what the app does when opening files)
+    QSettings classes("HKEY_CURRENT_USER\\Software\\Classes", QSettings::NativeFormat);
+    QString cmdLine = QString("\"%1\" \"%2\"").arg(appPath, "%1");
+    
+    classes.setValue(imageProgId + "/shell/open/command/.", cmdLine);
+    classes.setValue(videoProgId + "/shell/open/command/.", cmdLine);
+    classes.setValue(audioProgId + "/shell/open/command/.", cmdLine);
+    classes.setValue(documentProgId + "/shell/open/command/.", cmdLine);
+    classes.setValue(codeProgId + "/shell/open/command/.", cmdLine);
+    classes.sync();
+    
+    // 2. Register Capabilities (path must match RegisteredApplications entry)
+    QSettings caps("HKEY_CURRENT_USER\\Software\\" + appName + "\\Capabilities", QSettings::NativeFormat);
+    caps.setValue("ApplicationName", friendlyName);
+    caps.setValue("ApplicationDescription", "S3rp3nt Media Viewer - A modern viewer for images, videos, audio, and documents");
+    
+    // Register file associations by category
+    for (const QString &ext : imageExtensions) {
+        caps.setValue("FileAssociations/" + ext, imageProgId);
+    }
+    for (const QString &ext : videoExtensions) {
+        caps.setValue("FileAssociations/" + ext, videoProgId);
+    }
+    for (const QString &ext : audioExtensions) {
+        caps.setValue("FileAssociations/" + ext, audioProgId);
+    }
+    for (const QString &ext : documentExtensions) {
+        caps.setValue("FileAssociations/" + ext, documentProgId);
+    }
+    for (const QString &ext : codeExtensions) {
+        caps.setValue("FileAssociations/" + ext, codeProgId);
+    }
+    caps.sync();
+    
+    // 3. Register in RegisteredApplications (key name must match appName exactly)
+    QSettings regApps("HKEY_CURRENT_USER\\Software\\RegisteredApplications", QSettings::NativeFormat);
+    regApps.setValue(appName, "Software\\" + appName + "\\Capabilities");
+    regApps.sync();
+    
+    // 4. Notify the shell of the changes
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+    
+    int totalExtensions = imageExtensions.size() + videoExtensions.size() + 
+                          audioExtensions.size() + documentExtensions.size() + 
+                          codeExtensions.size();
+    
+    qDebug() << "[FileAssoc] Registered" << totalExtensions << "file extensions";
+    qDebug() << "[FileAssoc] App name:" << appName;
+    qDebug() << "[FileAssoc] Executable:" << appPath;
+    
+    // 5. Open Windows 11 Settings app with app-specific query parameter
+    // On Windows 11, LaunchAdvancedAssociationUI() is deprecated for Win32 apps.
+    // The official way is to use ms-settings:defaultapps URI with registeredAppUser parameter.
+    // Since we register in HKCU (per-user), we use registeredAppUser.
+    QString settingsUri = QString("ms-settings:defaultapps?registeredAppUser=%1").arg(appName);
+    std::wstring uriW = settingsUri.toStdWString();
+    
+    qDebug() << "[FileAssoc] Opening Windows Settings:" << settingsUri;
+    ShellExecuteW(nullptr, L"open", uriW.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    
+    return true;
+#else
+    qDebug() << "[FileAssoc] Default app registration not implemented for this platform";
+    return false;
+#endif
 }
 
