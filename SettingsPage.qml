@@ -9,18 +9,47 @@ Rectangle {
     property color accentColor: "#121216"
     property color foregroundColor: "#f5f5f5"
     property bool dynamicColoringEnabled: true
+    property bool gradientBackgroundEnabled: true
+    property bool backdropBlurEnabled: false
+    property bool ambientGradientEnabled: false
+    property bool snowEffectEnabled: false
     property bool betaAudioProcessingEnabled: true
     
     signal backClicked()
     signal dynamicColoringToggled(bool enabled)
+    signal gradientBackgroundToggled(bool enabled)
+    signal backdropBlurToggled(bool enabled)
+    signal ambientGradientToggled(bool enabled)
+    signal snowEffectToggled(bool enabled)
     signal betaAudioProcessingToggled(bool enabled)
     
     color: Qt.darker(accentColor, 1.2)
 
-    ColumnLayout {
+    ScrollView {
+        id: scrollView
         anchors.fill: parent
-        anchors.margins: 32
+        anchors.margins: 0
+        clip: true
+        
+        ScrollBar.vertical.policy: ScrollBar.AsNeeded
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+        
+        contentWidth: availableWidth
+        contentHeight: contentItem.height
+        
+        Item {
+            id: contentItem
+            width: scrollView.availableWidth
+            height: contentColumn.implicitHeight + 64  // Top and bottom margins
+            
+            ColumnLayout {
+                id: contentColumn
+                width: parent.width - 64  // Left and right margins
         spacing: 18
+                anchors.top: parent.top
+                anchors.topMargin: 32
+                anchors.left: parent.left
+                anchors.leftMargin: 32
 
         RowLayout {
             Layout.fillWidth: true
@@ -68,7 +97,7 @@ Rectangle {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: backClicked()
+                onClicked: backClicked()
                 }
             }
 
@@ -262,6 +291,73 @@ Rectangle {
             font.pixelSize: 12
         }
 
+        CheckBox {
+            text: qsTr("Enable gradient background")
+            checked: gradientBackgroundEnabled
+            enabled: dynamicColoringEnabled && !backdropBlurEnabled && !ambientGradientEnabled
+            onToggled: gradientBackgroundToggled(checked)
+            palette.text: foregroundColor
+        }
+
+        Text {
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            text: qsTr("When enabled, creates a Spotify-style gradient background using multiple colors extracted from the cover image. Requires dynamic coloring to be enabled.")
+            color: Qt.lighter(foregroundColor, 1.3)
+            font.pixelSize: 12
+            opacity: dynamicColoringEnabled ? 1.0 : 0.5
+        }
+
+        CheckBox {
+            text: qsTr("Enable blurred backdrop background")
+            checked: backdropBlurEnabled
+            enabled: dynamicColoringEnabled && !gradientBackgroundEnabled && !ambientGradientEnabled
+            onToggled: backdropBlurToggled(checked)
+            palette.text: foregroundColor
+        }
+
+        Text {
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            text: qsTr("When enabled, creates a blurred backdrop effect using the cover art or image (like Apple Music, YouTube Music). The image is scaled, blurred, and darkened for a rich ambient background. Requires dynamic coloring to be enabled.")
+            color: Qt.lighter(foregroundColor, 1.3)
+            font.pixelSize: 12
+            opacity: dynamicColoringEnabled ? 1.0 : 0.5
+        }
+
+        CheckBox {
+            text: qsTr("Enable ambient animated gradient")
+            checked: ambientGradientEnabled
+            enabled: dynamicColoringEnabled
+            onToggled: ambientGradientToggled(checked)
+            palette.text: foregroundColor
+        }
+
+        Text {
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            text: qsTr("When enabled, creates a Spotify-style ambient animated gradient using GPU shaders. The gradient slowly animates with organic motion, creating a living, breathing background effect. Requires dynamic coloring to be enabled.")
+            color: Qt.lighter(foregroundColor, 1.3)
+            font.pixelSize: 12
+            opacity: dynamicColoringEnabled ? 1.0 : 0.5
+        }
+
+        CheckBox {
+            text: qsTr("Enable snow effect")
+            checked: snowEffectEnabled
+            enabled: true  // Snow can be enabled with any other effect
+            onToggled: snowEffectToggled(checked)
+            palette.text: foregroundColor
+        }
+
+        Text {
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            text: qsTr("When enabled, creates a beautiful hybrid snow effect combining procedural shader-based background snow with particle-based foreground flakes. Perfect for winter vibes! This effect is independent of dynamic coloring.")
+            color: Qt.lighter(foregroundColor, 1.3)
+            font.pixelSize: 12
+        }
+
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 1
@@ -295,6 +391,8 @@ Rectangle {
         }
 
         Item { Layout.fillHeight: true }
-    }
+            }  // End ColumnLayout
+        }  // End Item (contentItem)
+    }  // End ScrollView
 }
 

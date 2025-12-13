@@ -4,8 +4,8 @@ project(s3rp3nt_media VERSION 0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Multimedia Network)
-find_package(Qt6 OPTIONAL_COMPONENTS Pdf PdfQuick)
+find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Multimedia Network Widgets ShaderTools)
+find_package(Qt6 QUIET COMPONENTS Pdf PdfQuick)
 
 # Note: FFmpeg is used via QProcess (subprocess) for audio decoding
 # This handles HE-AAC correctly by ignoring broken MP4 timestamps
@@ -28,6 +28,8 @@ qt_add_executable(apps3rp3nt_media
     main.cpp
     colorutils.cpp
     colorutils.h
+    windowmanager.cpp
+    windowmanager.h
     wmfvideoplayer.cpp
     wmfvideoplayer.h
     wmfvideoplayer_playback.cpp
@@ -43,6 +45,8 @@ qt_add_executable(apps3rp3nt_media
     customaudioprocessor.h
     customaudioplayer.cpp
     customaudioplayer.h
+    singleinstancemanager.cpp
+    singleinstancemanager.h
     $<$<PLATFORM_ID:Windows>:app.rc>
 )
 
@@ -55,11 +59,18 @@ set(QML_FILES
         MetadataPopup.qml
         SettingsPage.qml
         WindowBackground.qml
+        GradientBackground.qml
+        BackdropBlur.qml
+        AmbientGradient.qml
+        SnowEffect.qml
+        ColorExtractor.qml
         MediaViewer.qml
         AudioControls.qml
         ImageControls.qml
         MarkdownViewer.qml
         AudioVisualizerView.qml
+        BassPulseWindow.qml
+        DebugConsole.qml
     TextViewer.qml
     PdfViewer.qml
 )
@@ -72,6 +83,15 @@ endif()
 qt_add_qml_module(apps3rp3nt_media
     URI s3rp3nt_media
     QML_FILES ${QML_FILES}
+)
+
+# Add shader files using qt_add_shaders - shaders are automatically added to resources
+qt_add_shaders(apps3rp3nt_media PRIVATE
+    FILES
+        ambientgradient.vert
+        ambientgradient.frag
+        snow.frag
+    OUTPUT_TARGETS shader_targets
 )
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
@@ -94,7 +114,7 @@ else()
 endif()
 
 target_link_libraries(apps3rp3nt_media
-    PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia Qt6::Network
+    PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia Qt6::Network Qt6::Widgets Qt6::ShaderTools
     PRIVATE qlementine-icons
 )
 
@@ -107,12 +127,13 @@ else()
     message(STATUS "PDF support disabled (Qt6::Pdf or Qt6::PdfQuick not found)")
 endif()
 
-# Windows-specific libraries for WASAPI audio loopback
+# Windows-specific libraries for WASAPI audio loopback and memory info
 if(WIN32)
     target_link_libraries(apps3rp3nt_media PRIVATE
         ole32
         oleaut32
         uuid
+        psapi
     )
 endif()
 

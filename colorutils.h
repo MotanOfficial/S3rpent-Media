@@ -13,6 +13,8 @@ public:
     explicit ColorUtils(QObject *parent = nullptr);
 
     Q_INVOKABLE QColor dominantColor(const QUrl &sourceUrl) const;
+    Q_INVOKABLE QVariantList extractPaletteColors(const QUrl &sourceUrl, int count = 5) const;
+    Q_INVOKABLE QVariantList createGradientStops(const QVariantList &colors) const;
     Q_INVOKABLE QUrl extractCoverArt(const QUrl &audioUrl) const;
     Q_INVOKABLE QUrl saveCoverArtImage(const QVariant &imageVariant) const;
     Q_INVOKABLE QVariantMap getAudioFormatInfo(const QUrl &audioUrl, qint64 durationMs) const;
@@ -26,6 +28,13 @@ public:
     Q_INVOKABLE bool registerAsDefaultImageViewer() const;
     Q_INVOKABLE void openDefaultAppsSettings() const;
     Q_INVOKABLE QString getAppPath() const;
+    
+    // Memory management
+    Q_INVOKABLE void clearImageCache() const;
+    Q_INVOKABLE qreal getMemoryUsage() const;
+    
+    // Clipboard
+    Q_INVOKABLE void copyToClipboard(const QString &text) const;
 };
 
 #endif // COLORUTILS_H

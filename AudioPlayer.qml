@@ -174,7 +174,6 @@ Item {
             } else {
                 const statusInfo = audioPlayer.lastLyricsStatus || {}
                 const message = statusInfo.message || errorMessage
-                console.log("[Lyrics] Failed to fetch lyrics:", message, "(" + (statusInfo.statusName || "unknown") + ")")
                 currentLyricIndex = -1
             }
         }
@@ -298,7 +297,6 @@ Item {
             return
         }
         
-        console.log("[Lyrics] Fetching lyrics for:", trackName, "-", artistName, "-", albumName)
         lastFetchedSignature = signature
         lyricsClient.fetchLyrics(trackName, artistName, albumName, 0)  // Pass 0 to indicate no duration
     }
@@ -531,16 +529,16 @@ Item {
                 return player.playbackState === MediaPlayer.PlayingState
             }
         }
-        audioAnalyzer: analyzer
+        audioAnalyzer: analyzerInstance
         
         property real baseAmplitude: volume * 0.6
         property real animatedAmplitude: 0.0
         
-        amplitude: analyzer && analyzer.overallAmplitude ? analyzer.overallAmplitude * 2.0 : animatedAmplitude
+        amplitude: analyzerInstance && analyzerInstance.overallAmplitude ? analyzerInstance.overallAmplitude * 2.0 : animatedAmplitude
         
         Timer {
             interval: 100
-            running: audioVisualizer.active && (!analyzer || !analyzer.active)
+            running: audioVisualizer.active && (!analyzerInstance || !analyzerInstance.active)
             repeat: true
             onTriggered: {
                 // Fallback: Create smooth varying amplitude if analyzer not available
@@ -561,18 +559,19 @@ Item {
     }
     
     // Audio analyzer (C++ backend)
+    property alias analyzer: analyzerInstance
     AudioVisualizer {
-        id: analyzer
+        id: analyzerInstance
         Component.onCompleted: {
             // Set the appropriate player based on betaAudioProcessingEnabled
             if (betaAudioProcessingEnabled && customPlayer) {
                 // For CustomAudioPlayer, feed samples directly to avoid WASAPI loopback capturing all system audio
-                customPlayer.audioVisualizer = analyzer
+                customPlayer.audioVisualizer = analyzerInstance
                 // CustomAudioPlayer is not a QMediaPlayer, but AudioVisualizer accepts QObject for compatibility
-                analyzer.setMediaPlayer(customPlayer)
+                analyzerInstance.setMediaPlayer(customPlayer)
             } else {
                 // For standard player, use WASAPI loopback
-                analyzer.setMediaPlayer(player)
+                analyzerInstance.setMediaPlayer(player)
             }
         }
     }
@@ -604,9 +603,9 @@ Item {
         enabled: !betaAudioProcessingEnabled
         function onPlaybackStateChanged() {
             if (player.playbackState === MediaPlayer.PlayingState && showVisualizer) {
-                analyzer.start()
+                analyzerInstance.start()
             } else {
-                analyzer.stop()
+                analyzerInstance.stop()
             }
         }
     }
@@ -616,9 +615,9 @@ Item {
         target: (betaAudioProcessingEnabled && customPlayer) ? customPlayer : null
         function onPlaybackStateChanged() {
             if (customPlayer && customPlayer.playbackState === CustomAudioPlayer.PlayingState && showVisualizer) {
-                analyzer.start()
+                analyzerInstance.start()
             } else {
-                analyzer.stop()
+                analyzerInstance.stop()
             }
         }
     }
@@ -629,9 +628,9 @@ Item {
             if (source !== "") {
                 // Set the appropriate player based on betaAudioProcessingEnabled
                 if (betaAudioProcessingEnabled && customPlayer) {
-                    analyzer.setMediaPlayer(customPlayer)
+                    analyzerInstance.setMediaPlayer(customPlayer)
                 } else {
-                    analyzer.setMediaPlayer(player)
+                    analyzerInstance.setMediaPlayer(player)
                 }
             }
         }

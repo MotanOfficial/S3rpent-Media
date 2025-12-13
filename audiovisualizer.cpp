@@ -21,6 +21,7 @@ AudioVisualizer::AudioVisualizer(QObject *parent)
     , m_updateTimer(new QTimer(this))
     , m_captureTimer(new QTimer(this))
     , m_overallAmplitude(0.0)
+    , m_bassAmplitude(0.0)
     , m_active(false)
     , m_useDirectFeed(false)
 #ifdef Q_OS_WIN
@@ -416,6 +417,28 @@ void AudioVisualizer::performFFT(const QVector<qreal> &samples)
     for (int i = 0; i < paddedSize / 2; ++i) {
         magnitudes[i] = std::abs(fftData[i]) / paddedSize;
     }
+    
+    // Calculate kick amplitude (80-150 Hz) - focused on kick drum punch, excludes deep sub bass
+    const qreal sampleRate = 44100.0;  // Assume 44.1kHz
+    const qreal bassStartFreq = 80.0;  // Kick drum range start (excludes sub bass)
+    const qreal bassEndFreq = 150.0;   // Kick drum range end
+    int bassStartBin = static_cast<int>(bassStartFreq * paddedSize / sampleRate);
+    int bassEndBin = static_cast<int>(bassEndFreq * paddedSize / sampleRate);
+    bassStartBin = qBound(0, bassStartBin, magnitudes.size() - 1);
+    bassEndBin = qBound(bassStartBin + 1, bassEndBin, magnitudes.size());
+    
+    qreal bassSum = 0.0;
+    for (int i = bassStartBin; i < bassEndBin; ++i) {
+        bassSum += magnitudes[i];
+    }
+    qreal newBassAmplitude = (bassEndBin > bassStartBin) ? (bassSum / (bassEndBin - bassStartBin)) : 0.0;
+    newBassAmplitude *= 40.0;  // Slightly increased scale for kick detection
+    newBassAmplitude = qBound(0.0, newBassAmplitude, 1.0);  // Clamp to 0-1
+    
+    // Slightly more smoothing for kick detection - balanced response
+    // 75% old, 25% new (slightly smoother while still catching kick hits)
+    m_bassAmplitude = m_bassAmplitude * 0.75 + newBassAmplitude * 0.25;
+    emit bassAmplitudeChanged();
     
     QVector<qreal> bands = calculateFrequencyBands(magnitudes);
     

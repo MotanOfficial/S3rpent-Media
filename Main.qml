@@ -19,10 +19,33 @@ ApplicationWindow {
     background: WindowBackground {
         accentColor: window.accentColor
         dynamicColoringEnabled: window.dynamicColoringEnabled
+        gradientBackgroundEnabled: window.gradientBackgroundEnabled
+        backdropBlurEnabled: window.backdropBlurEnabled
+        ambientGradientEnabled: window.ambientGradientEnabled
+        snowEffectEnabled: window.snowEffectEnabled
+        backdropImageSource: window.backdropImageSource
+        paletteColors: window.paletteColors
     }
 
     property url initialImage: ""
     property url currentImage: ""
+    property bool isMainWindow: true  // Default to true for main window
+    property var debugConsole: null  // Reference to debug console window
+    
+    // Watch for debugConsole being set
+    onDebugConsoleChanged: {
+        if (debugConsole) {
+            logToDebugConsole("[App] Debug console reference received", "info")
+            // Test the connection
+            Qt.callLater(function() {
+                if (typeof debugConsole.addLog === "function") {
+                    logToDebugConsole("[App] Debug console connection verified", "info")
+                } else {
+                    console.log("[App] ERROR: debugConsole.addLog is not a function")
+                }
+            })
+        }
+    }
     property bool isVideo: false
     property bool isGif: false
     property bool isAudio: false
@@ -49,6 +72,14 @@ ApplicationWindow {
         category: "audio"
         property alias volume: window.audioVolume
     }
+    
+    Settings {
+        id: appearanceSettings
+        category: "appearance"
+        property alias dynamicColoringEnabled: window.dynamicColoringEnabled
+        property alias gradientBackgroundEnabled: window.gradientBackgroundEnabled
+    }
+    
     property url audioCoverArt: ""
     property var audioFormatInfo: ({ sampleRate: 0, bitrate: 0 })
     property int lastAudioDuration: 0  // Track last duration to prevent infinite loops
@@ -56,12 +87,52 @@ ApplicationWindow {
     property color accentColor: fallbackAccent
     property color foregroundColor: "#f5f5f5"
     
+    // Color extraction component
+    ColorExtractor {
+        id: colorExtractor
+        target: window
+        dynamicColoringEnabled: window.dynamicColoringEnabled
+        gradientBackgroundEnabled: window.gradientBackgroundEnabled
+        currentImage: window.currentImage
+        isAudio: window.isAudio
+        audioCoverArt: window.audioCoverArt
+        fallbackAccent: window.fallbackAccent
+    }
+    
     // Smooth transitions for dynamic accent color
-    Behavior on accentColor { ColorAnimation { duration: 300; easing.type: Easing.OutCubic } }
+    Behavior on accentColor { 
+        ColorAnimation { 
+            duration: 300
+            easing.type: Easing.OutCubic 
+        } 
+    }
     Behavior on foregroundColor { ColorAnimation { duration: 300; easing.type: Easing.OutCubic } }
     
     property bool dynamicColoringEnabled: true
     property bool betaAudioProcessingEnabled: true
+    property bool gradientBackgroundEnabled: true
+    property bool backdropBlurEnabled: false  // Blurred cover-art backdrop effect
+    property bool ambientGradientEnabled: false  // Spotify-style ambient animated gradient
+    property bool snowEffectEnabled: false  // Hybrid snow effect (shader + particles)
+    property var paletteColors: []  // Array of colors for gradient background
+    
+    // Image source for backdrop blur (cover art for audio, currentImage for images)
+    // For audio: prefer cover art, fallback to currentImage if cover art not available yet
+    // For images: use currentImage directly
+    readonly property url backdropImageSource: (isAudio && audioCoverArt && audioCoverArt !== "") 
+                                                ? audioCoverArt 
+                                                : (isAudio && currentImage && currentImage !== "")
+                                                  ? currentImage  // Fallback to audio file itself if cover art not extracted yet
+                                                  : (isImageType && currentImage && currentImage !== "") 
+                                                    ? currentImage 
+                                                    : ""
+    
+    onGradientBackgroundEnabledChanged: {
+    }
+    
+    onPaletteColorsChanged: {
+    }
+    
     property real loadStartTime: 0
     property url pendingLoadSource: ""
     property string pendingLoadType: ""
@@ -73,10 +144,20 @@ ApplicationWindow {
     property bool _navigatingImages: false  // Flag to prevent re-scanning during navigation
     property bool showImageControls: false  // Toggle for image controls visibility
 
+    // Helper properties to get viewers from Loaders (returns null if not loaded)
+    property var imageViewer: viewerLoader.item
+    property var videoPlayer: videoPlayerLoader.item
+    property var audioPlayer: audioPlayerLoader.item
+    property var markdownViewer: markdownViewerLoader.item
+    property var textViewer: textViewerLoader.item
+    property var pdfViewer: pdfViewerLoader.item
+
     function adjustZoom(delta) {
         if (currentImage === "" || isVideo || isAudio || isMarkdown || isText || isPdf)
             return;
-        imageViewer.adjustZoom(delta);
+        if (viewerLoader.item) {
+            viewerLoader.item.adjustZoom(delta);
+        }
     }
     
     // Image navigation functions
@@ -124,7 +205,134 @@ ApplicationWindow {
 
     function resetView() {
         if (!isVideo && !isAudio && !isMarkdown && !isText && !isPdf) {
-            imageViewer.resetView()
+            if (viewerLoader.item) {
+                viewerLoader.item.resetView()
+            }
+        }
+    }
+    
+    function unloadMedia() {
+        // Set flag to prevent onCurrentImageChanged from triggering load logic
+        _isUnloading = true
+        
+        // Log memory before unload
+        let memBefore = 0.0
+        if (typeof ColorUtils !== "undefined" && ColorUtils.getMemoryUsage) {
+            memBefore = ColorUtils.getMemoryUsage()
+            logToDebugConsole("[Unload] Memory before unload: " + memBefore.toFixed(2) + " MB", "info")
+        }
+        
+        logToDebugConsole("[Unload] Starting media unload...", "info")
+        
+        // FIRST: Make image viewer invisible to prevent any rendering/flash
+        // Note: imageViewer.visible is bound to currentImage, so clearing currentImage will hide it
+        // But we can also explicitly hide it for extra safety
+        if (imageViewer) {
+            logToDebugConsole("[Unload] Making image viewer invisible", "info")
+        }
+        
+        // CRITICAL: Clear currentImage FIRST before anything else
+        // This ensures all bound components (imageViewer, videoPlayer, audioPlayer) clear immediately
+        currentImage = ""
+        logToDebugConsole("[Unload] Cleared currentImage", "info")
+        
+        // Unload all viewers via Loaders to ensure proper cleanup
+        try {
+            unloadAllViewers()
+            logToDebugConsole("[Unload] All viewers unloaded via Loaders", "info")
+        } catch (e) {
+            logToDebugConsole("[Unload] ERROR in unloadAllViewers: " + e, "error")
+        }
+        
+        logToDebugConsole("[Unload] Step: About to clear media properties", "info")
+        // Clear all other media properties
+        initialImage = ""
+        directoryImages = []
+        currentImageIndex = 0
+        audioCoverArt = ""
+        audioFormatInfo = { sampleRate: 0, bitrate: 0 }
+        logToDebugConsole("[Unload] Cleared media properties", "info")
+        
+        logToDebugConsole("[Unload] Step: About to reset view", "info")
+        // Reset view
+        resetView()
+        logToDebugConsole("[Unload] Step: Reset view complete", "info")
+
+        logToDebugConsole("[Unload] Step: About to reset accent color", "info")
+        // Reset accent color to default (black)
+        accentColor = Qt.rgba(0.07, 0.07, 0.09, 1.0)
+        dynamicColoringEnabled = true  // Re-enable for next load
+        logToDebugConsole("[Unload] Reset accent color to default", "info")
+        
+        logToDebugConsole("[Unload] Step: About to hide controls", "info")
+        // Hide controls
+        showImageControls = false
+        showingSettings = false
+        showingMetadata = false
+        logToDebugConsole("[Unload] Step: Controls hidden", "info")
+        
+        logToDebugConsole("[Unload] Step: About to clear Qt image cache", "info")
+        // Clear Qt's image cache immediately (synchronous)
+        try {
+            if (typeof ColorUtils !== "undefined" && ColorUtils.clearImageCache) {
+                ColorUtils.clearImageCache()
+                logToDebugConsole("[Unload] Cleared Qt image cache", "info")
+            } else {
+                logToDebugConsole("[Unload] WARNING: ColorUtils.clearImageCache not available", "warning")
+            }
+        } catch (e) {
+            logToDebugConsole("[Unload] ERROR in clearImageCache: " + e, "error")
+        }
+        
+        logToDebugConsole("[Unload] Step: About to force garbage collection", "info")
+        // Force QML garbage collection to release memory immediately
+        try {
+            if (typeof Qt !== "undefined" && Qt.callLater) {
+                // Force GC by processing events and calling GC
+                Qt.callLater(function() {
+                    // Give Qt a moment to process cleanup events
+                    Qt.callLater(function() {
+                        // Now measure memory after GC has had time to run
+                        logToDebugConsole("[Unload] Step: About to get memory after unload (after GC)", "info")
+                        try {
+                            if (typeof ColorUtils !== "undefined" && ColorUtils.getMemoryUsage) {
+                                const memAfter = ColorUtils.getMemoryUsage()
+                                const freed = memBefore - memAfter
+                                logToDebugConsole("[Unload] Memory after unload: " + memAfter.toFixed(2) + " MB (freed: " + freed.toFixed(2) + " MB)", "info")
+                            } else {
+                                logToDebugConsole("[Unload] WARNING: ColorUtils.getMemoryUsage not available", "warning")
+                            }
+                        } catch (e) {
+                            logToDebugConsole("[Unload] ERROR in getMemoryUsage: " + e, "error")
+                        }
+                    }, 100)  // 100ms delay to allow GC to run
+                })
+            }
+        } catch (e) {
+            logToDebugConsole("[Unload] ERROR in GC delay: " + e, "error")
+        }
+        
+        // Log memory immediately (before GC) for comparison
+        try {
+            if (typeof ColorUtils !== "undefined" && ColorUtils.getMemoryUsage) {
+                const memAfterImmediate = ColorUtils.getMemoryUsage()
+                const freedImmediate = memBefore - memAfterImmediate
+                logToDebugConsole("[Unload] Memory immediately after unload (before GC): " + memAfterImmediate.toFixed(2) + " MB (freed: " + freedImmediate.toFixed(2) + " MB)", "info")
+            }
+        } catch (e) {
+            // Ignore errors in immediate measurement
+        }
+        
+        logToDebugConsole("[Unload] Media unload complete", "info")
+        
+        // Clear the unloading flag
+        _isUnloading = false
+        logToDebugConsole("[Unload] Unloading flag cleared, function returning", "info")
+    }
+    
+    function loadFile(fileUrl) {
+        if (fileUrl && fileUrl !== "") {
+            currentImage = fileUrl
         }
     }
 
@@ -142,49 +350,18 @@ ApplicationWindow {
                 return
         } else if (!window.isAudio) {
             // For images, use the imageViewer component
-            imageViewer.clampPan()
+            if (viewerLoader.item) {
+                viewerLoader.item.clampPan()
+            }
         }
-    }
-
-    function luminance(color) {
-        if (!color)
-            return 0
-        return 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b
     }
 
     function useFallbackAccent() {
-        accentColor = fallbackAccent
-        foregroundColor = "#f5f5f5"
+        colorExtractor.useFallbackAccent()
     }
 
     function updateAccentColor() {
-        if (!dynamicColoringEnabled) {
-            useFallbackAccent()
-            return
-        }
-        
-        // For audio files, use cover art if available
-        let imageSource = currentImage
-        if (isAudio && audioCoverArt && audioCoverArt !== "") {
-            imageSource = audioCoverArt
-        }
-        
-        if (!imageSource || imageSource === "") {
-            useFallbackAccent()
-            return
-        }
-        if (typeof ColorUtils === "undefined" || !ColorUtils.dominantColor) {
-            useFallbackAccent()
-            return
-        }
-        const sampled = ColorUtils.dominantColor(imageSource)
-        if (!sampled || sampled.a === 0) {
-            useFallbackAccent()
-        } else {
-            accentColor = sampled
-            const lum = luminance(sampled)
-            foregroundColor = lum > 0.65 ? "#050505" : "#f5f5f5"
-        }
+        colorExtractor.updateAccentColor()
     }
 
     function checkIfVideo(url) {
@@ -348,19 +525,21 @@ ApplicationWindow {
             return
         }
         
-        // Use C++ helper to extract cover art (runs in background to avoid UI freeze)
-        // The C++ function is still synchronous but we call it asynchronously via Qt.callLater
+        // Use C++ helper to extract cover art - call asynchronously to avoid blocking UI
+        // Defer color extraction to after cover art is ready (non-blocking)
         if (typeof ColorUtils !== "undefined" && ColorUtils.extractCoverArt) {
+            Qt.callLater(function() {
             const coverArtUrl = ColorUtils.extractCoverArt(currentImage)
             if (coverArtUrl && coverArtUrl !== "") {
                 audioCoverArt = coverArtUrl
-                // Update accent color from cover art
+                    // Update accent color from cover art (also deferred, non-blocking)
                 Qt.callLater(function() {
                     updateAccentColor()
                 })
             } else {
                 audioCoverArt = ""
             }
+            })
         } else {
             audioCoverArt = ""
         }
@@ -373,29 +552,24 @@ ApplicationWindow {
         }
         // If duration not provided, try to get it from audioPlayer
         if (durationMs === undefined || durationMs === 0) {
-            if (audioPlayer && audioPlayer.duration > 0) {
-                durationMs = audioPlayer.duration
-                console.log("[Audio] Using duration from audioPlayer:", durationMs, "ms")
+            if (audioPlayerLoader.item && audioPlayerLoader.item.duration > 0) {
+                durationMs = audioPlayerLoader.item.duration
             } else {
                 // Still get sample rate even without duration (bitrate will be 0)
                 durationMs = 0
-                console.log("[Audio] getAudioFormatInfo called without duration, will get sample rate only")
             }
         }
         
         // Use C++ helper to get audio format info directly from the media file
         if (typeof ColorUtils !== "undefined" && ColorUtils.getAudioFormatInfo) {
-            console.log("[Audio] Calling getAudioFormatInfo with durationMs:", durationMs)
             const formatInfo = ColorUtils.getAudioFormatInfo(currentImage, durationMs)
             if (formatInfo) {
-                console.log("[Audio] Format info received:", JSON.stringify(formatInfo), "durationMs:", durationMs)
                 // Merge with existing to preserve values
                 const newInfo = {
                     sampleRate: formatInfo.sampleRate || audioFormatInfo.sampleRate || 0,
                     bitrate: formatInfo.bitrate || audioFormatInfo.bitrate || 0
                 }
                 audioFormatInfo = newInfo
-                console.log("[Audio] Updated audioFormatInfo:", JSON.stringify(audioFormatInfo))
                 // Refresh metadata if popup is open
                 if (showingMetadata) {
                     Qt.callLater(function() {
@@ -405,14 +579,32 @@ ApplicationWindow {
                     })
                 }
             } else {
-                console.log("[Audio] Format info is null/undefined")
                 if (!audioFormatInfo || (audioFormatInfo.sampleRate === 0 && audioFormatInfo.bitrate === 0)) {
                     audioFormatInfo = { sampleRate: 0, bitrate: 0 }
                 }
             }
         } else {
-            console.log("[Audio] ColorUtils.getAudioFormatInfo not available")
             audioFormatInfo = { sampleRate: 0, bitrate: 0 }
+        }
+    }
+
+    function logToDebugConsole(message, type) {
+        // Always log to regular console first
+        console.log(message)
+        
+        // Try to log to debug console
+        if (debugConsole) {
+            try {
+                if (typeof debugConsole.addLog === "function") {
+                    debugConsole.addLog(message, type || "info")
+                } else {
+                    console.log("[Debug] debugConsole.addLog not available")
+                }
+            } catch (e) {
+                console.log("[Debug] Error logging to console:", e)
+            }
+        } else {
+            console.log("[Debug] debugConsole is null")
         }
     }
 
@@ -426,7 +618,8 @@ ApplicationWindow {
         loadStartTime = Date.now()
         pendingLoadSource = currentImage
         pendingLoadType = typeLabel || "Unknown"
-        console.log("[Load] Started", pendingLoadType, "for", decodeURIComponent(currentImage.toString()))
+        const message = "[Load] Started " + pendingLoadType + " for " + decodeURIComponent(currentImage.toString())
+        logToDebugConsole(message, "info")
     }
 
     function logLoadDuration(statusLabel, sourceUrl) {
@@ -438,13 +631,128 @@ ApplicationWindow {
             return
         }
         const elapsed = Date.now() - loadStartTime
-        console.log("[Load]", statusLabel, "in", elapsed, "ms (" + pendingLoadType + ")")
+        const message = "[Load] " + statusLabel + " in " + elapsed + " ms (" + pendingLoadType + ")"
+        logToDebugConsole(message, "info")
         loadStartTime = 0
         pendingLoadSource = ""
         pendingLoadType = ""
     }
 
+    // Flag to prevent loading when we're intentionally clearing
+    property bool _isUnloading: false
+
+    // Functions to load/unload ImageViewer via Loader (recreates it for proper scene graph rebinding)
+    function loadImageViewer() {
+        viewerLoader.active = false
+        viewerLoader.active = true
+    }
+    
+    function unloadImageViewer() {
+        viewerLoader.active = false
+    }
+    
+    // Functions to load/unload VideoPlayer via Loader
+    function loadVideoPlayer() {
+        videoPlayerLoader.active = false
+        videoPlayerLoader.active = true
+    }
+    
+    function unloadVideoPlayer() {
+        if (videoPlayerLoader.item) {
+            videoPlayerLoader.item.stop()
+            videoPlayerLoader.item.source = ""
+        }
+        videoPlayerLoader.active = false
+    }
+    
+    // Functions to load/unload AudioPlayer via Loader
+    function loadAudioPlayer() {
+        audioPlayerLoader.active = false
+        audioPlayerLoader.active = true
+    }
+    
+    function unloadAudioPlayer() {
+        if (audioPlayerLoader.item) {
+            audioPlayerLoader.item.stop()
+            audioPlayerLoader.item.source = ""
+        }
+        audioPlayerLoader.active = false
+    }
+    
+    // Functions to load/unload MarkdownViewer via Loader
+    function loadMarkdownViewer() {
+        markdownViewerLoader.active = false
+        markdownViewerLoader.active = true
+    }
+    
+    function unloadMarkdownViewer() {
+        markdownViewerLoader.active = false
+    }
+    
+    // Functions to load/unload TextViewer via Loader
+    function loadTextViewer() {
+        textViewerLoader.active = false
+        textViewerLoader.active = true
+    }
+    
+    function unloadTextViewer() {
+        textViewerLoader.active = false
+    }
+    
+    // Functions to load/unload PdfViewer via Loader
+    function loadPdfViewer() {
+        pdfViewerLoader.active = false
+        pdfViewerLoader.active = true
+    }
+    
+    function unloadPdfViewer() {
+        pdfViewerLoader.active = false
+    }
+    
+    // Helper function to unload all viewers
+    function unloadAllViewers() {
+        unloadImageViewer()
+        unloadVideoPlayer()
+        unloadAudioPlayer()
+        unloadMarkdownViewer()
+        unloadTextViewer()
+        unloadPdfViewer()
+    }
+
     onCurrentImageChanged: {
+        const imageStr = currentImage.toString()
+        
+        // If currentImage is empty, unload all viewers and return early
+        // CRITICAL: Do NOT load any viewer when clearing - only unload
+        if (currentImage === "") {
+            // Unload all viewers (only if active to avoid unnecessary calls)
+            if (viewerLoader.active) unloadImageViewer()
+            if (videoPlayerLoader.active) unloadVideoPlayer()
+            if (audioPlayerLoader.active) unloadAudioPlayer()
+            if (markdownViewerLoader.active) unloadMarkdownViewer()
+            if (textViewerLoader.active) unloadTextViewer()
+            if (pdfViewerLoader.active) unloadPdfViewer()
+            useFallbackAccent()
+            logToDebugConsole("[Media] Cleared current image", "info")
+            return  // CRITICAL: Return early - do NOT proceed to load logic below
+        }
+        
+        // If we're in the middle of unloading, handle appropriately
+        // This prevents race conditions when unloadMedia() or resetForReuse() sets currentImage = ""
+        if (_isUnloading) {
+            // If currentImage is empty, we're actually unloading - skip load
+            if (currentImage === "") {
+                logToDebugConsole("[Media] Skipping load - unload in progress (empty URL)", "info")
+                return
+            }
+            // If we have a valid URL, this means resetForReuse() set the flag,
+            // and now C++ is setting a new image - clear the flag and continue loading
+            logToDebugConsole("[Media] Clearing unloading flag - new media URL set after reset", "info")
+            _isUnloading = false
+            // Continue to load logic below (don't return)
+        }
+        
+        // New image to load - reset view and detect type
         resetView()
         isVideo = checkIfVideo(currentImage)
         isGif = checkIfGif(currentImage)
@@ -452,11 +760,29 @@ ApplicationWindow {
         isMarkdown = checkIfMarkdown(currentImage)
         isText = checkIfText(currentImage)
         isPdf = checkIfPdf(currentImage)
-        if (currentImage === "") {
-            useFallbackAccent()
-            startLoadTimer("")
-            return
+        
+        // CRITICAL: Clear unloading flag before loading (in case it was set by resetForReuse)
+        _isUnloading = false
+        
+        // CRITICAL: Recreate the appropriate viewer via Loader to ensure proper scene graph rebinding
+        // This fixes the issue where components don't reload after window hide/show
+        if (isVideo) {
+            loadVideoPlayer()
+        } else if (isAudio) {
+            loadAudioPlayer()
+        } else if (isMarkdown) {
+            loadMarkdownViewer()
+        } else if (isText) {
+            loadTextViewer()
+        } else if (isPdf) {
+            loadPdfViewer()
+        } else {
+            // Image (including GIF)
+            loadImageViewer()
         }
+        
+        // Log image change
+        const fileName = currentImage.toString().split("/").pop() || currentImage.toString()
         if (isVideo) {
             useFallbackAccent()
             startLoadTimer("Video")
@@ -485,10 +811,14 @@ ApplicationWindow {
             }
         } else if (isVideo) {
             // Stop audio if playing
-            audioPlayer.stop()
+            if (audioPlayerLoader.item) {
+                audioPlayerLoader.item.stop()
+            }
         } else if (isAudio) {
             // Stop video if playing
-            videoPlayer.stop()
+            if (videoPlayerLoader.item) {
+                videoPlayerLoader.item.stop()
+            }
             // Reset cover art and format info
             audioCoverArt = ""
             audioFormatInfo = { sampleRate: 0, bitrate: 0 }
@@ -499,16 +829,20 @@ ApplicationWindow {
             })
         } else if (isMarkdown || isText || isPdf) {
             // Stop video and audio if they have a source and are playing
-            if (videoPlayer && videoPlayer.source !== "") {
-                const state = videoPlayer.playbackState
+            if (videoPlayerLoader.item && videoPlayerLoader.item.source !== "") {
+                const state = videoPlayerLoader.item.playbackState
                 if (state !== undefined && (state === MediaPlayer.PlayingState || state === MediaPlayer.PausedState || (typeof state === 'number' && state > 0))) {
-                    videoPlayer.stop()
+                    if (videoPlayerLoader.item) {
+                videoPlayerLoader.item.stop()
+            }
                 }
             }
-            if (audioPlayer && audioPlayer.source !== "") {
-                const state = audioPlayer.playbackState
+            if (audioPlayerLoader.item && audioPlayerLoader.item.source !== "") {
+                const state = audioPlayerLoader.item.playbackState
                 if (state !== undefined && (state === MediaPlayer.PlayingState || state === MediaPlayer.PausedState || (typeof state === 'number' && state > 0))) {
-                    audioPlayer.stop()
+                    if (audioPlayerLoader.item) {
+                audioPlayerLoader.item.stop()
+            }
                 }
             }
         }
@@ -549,7 +883,10 @@ ApplicationWindow {
                             else
                                 window.showMaximized()
                         }
-        onCloseClicked: Qt.quit()
+        onCloseClicked: {
+            // Always trigger close event - let onClosing handle the logic
+            window.close()
+        }
         onWindowMoveRequested: window.startSystemMove()
     }
 
@@ -594,17 +931,17 @@ ApplicationWindow {
             list.push({ label: "Media Type", value: "Video" })
             
             // Duration
-            if (videoPlayer.duration > 0) {
-                list.push({ label: "Duration", value: formatTime(videoPlayer.duration) })
+            if (videoPlayerLoader.item && videoPlayerLoader.item.duration > 0) {
+                list.push({ label: "Duration", value: formatTime(videoPlayerLoader.item.duration) })
             }
             
             // Get resolution from implicit size (always available)
-            if (videoPlayer.implicitWidth > 0 && videoPlayer.implicitHeight > 0) {
-                list.push({ label: "Resolution", value: Math.round(videoPlayer.implicitWidth) + " × " + Math.round(videoPlayer.implicitHeight) + " px" })
+            if (videoPlayerLoader.item && videoPlayerLoader.item.implicitWidth > 0 && videoPlayerLoader.item.implicitHeight > 0) {
+                list.push({ label: "Resolution", value: Math.round(videoPlayerLoader.item.implicitWidth) + " × " + Math.round(videoPlayerLoader.item.implicitHeight) + " px" })
             }
             
             // Try to get metadata - Qt 6 metadata access
-            const metaData = videoPlayer.metaData
+            const metaData = videoPlayerLoader.item ? videoPlayerLoader.item.metaData : null
             if (metaData) {
                 // Helper to safely get metadata
                 const getMeta = function(key) {
@@ -692,27 +1029,29 @@ ApplicationWindow {
             }
             
             // Tracks
-            list.push({ label: "Video Track", value: videoPlayer.hasVideo ? "Yes" : "No" })
-            list.push({ label: "Audio Track", value: videoPlayer.hasAudio ? "Yes" : "No" })
-            
-            // Playback info
-            if (videoPlayer.playbackRate !== undefined && videoPlayer.playbackRate !== 1.0) {
-                list.push({ label: "Playback Rate", value: videoPlayer.playbackRate.toFixed(2) + "x" })
-            }
-            if (videoPlayer.playbackState !== undefined) {
-                const states = ["Stopped", "Playing", "Paused"]
-                list.push({ label: "Playback State", value: states[videoPlayer.playbackState] || "Unknown" })
+            if (videoPlayerLoader.item) {
+                list.push({ label: "Video Track", value: videoPlayerLoader.item.hasVideo ? "Yes" : "No" })
+                list.push({ label: "Audio Track", value: videoPlayerLoader.item.hasAudio ? "Yes" : "No" })
+                
+                // Playback info
+                if (videoPlayerLoader.item.playbackRate !== undefined && videoPlayerLoader.item.playbackRate !== 1.0) {
+                    list.push({ label: "Playback Rate", value: videoPlayerLoader.item.playbackRate.toFixed(2) + "x" })
+                }
+                if (videoPlayerLoader.item.playbackState !== undefined) {
+                    const states = ["Stopped", "Playing", "Paused"]
+                    list.push({ label: "Playback State", value: states[videoPlayerLoader.item.playbackState] || "Unknown" })
+                }
             }
         } else if (window.isAudio) {
             list.push({ label: "Media Type", value: "Audio" })
             
             // Duration
-            if (audioPlayer.duration > 0) {
-                list.push({ label: "Duration", value: formatTime(audioPlayer.duration) })
+            if (audioPlayerLoader.item && audioPlayerLoader.item.duration > 0) {
+                list.push({ label: "Duration", value: formatTime(audioPlayerLoader.item.duration) })
             }
             
             // Try to get metadata
-            const metaData = audioPlayer.metaData
+            const metaData = audioPlayerLoader.item ? audioPlayerLoader.item.metaData : null
             if (metaData) {
                 const getMeta = function(key) {
                     try {
@@ -760,15 +1099,15 @@ ApplicationWindow {
                     list.push({ label: "Bitrate", value: bitrateStr })
                 } else {
                     // Fallback to metadata
-                const audioBitrate = getMeta(MediaMetaData.AudioBitRate) || getMeta("AudioBitRate")
-                if (audioBitrate) {
-                    const bitrate = parseInt(audioBitrate)
-                    if (!isNaN(bitrate) && bitrate > 0) {
-                        const bitrateStr = bitrate >= 1000000 
-                            ? (bitrate / 1000000).toFixed(2) + " Mbps"
-                            : (bitrate >= 1000 ? (bitrate / 1000).toFixed(0) + " kbps" : bitrate + " bps")
-                        list.push({ label: "Bitrate", value: bitrateStr })
-                    }
+                    const audioBitrate = getMeta(MediaMetaData.AudioBitRate) || getMeta("AudioBitRate")
+                    if (audioBitrate) {
+                        const bitrate = parseInt(audioBitrate)
+                        if (!isNaN(bitrate) && bitrate > 0) {
+                            const bitrateStr = bitrate >= 1000000 
+                                ? (bitrate / 1000000).toFixed(2) + " Mbps"
+                                : (bitrate >= 1000 ? (bitrate / 1000).toFixed(0) + " kbps" : bitrate + " bps")
+                            list.push({ label: "Bitrate", value: bitrateStr })
+                        }
                     }
                 }
                 
@@ -855,51 +1194,51 @@ ApplicationWindow {
             }
             
             // Playback info
-            if (audioPlayer.playbackState !== undefined) {
+            if (audioPlayerLoader.item && audioPlayerLoader.item.playbackState !== undefined) {
                 const states = ["Stopped", "Playing", "Paused"]
-                list.push({ label: "Playback State", value: states[audioPlayer.playbackState] || "Unknown" })
+                list.push({ label: "Playback State", value: states[audioPlayerLoader.item.playbackState] || "Unknown" })
             }
         } else if (window.isGif) {
             list.push({ label: "Media Type", value: "Animated GIF" })
-            if (imageViewer.paintedWidth > 0 && imageViewer.paintedHeight > 0) {
-                list.push({ label: "Dimensions", value: imageViewer.paintedWidth + " × " + imageViewer.paintedHeight + " px" })
+            if (viewerLoader.item && viewerLoader.item.paintedWidth > 0 && viewerLoader.item.paintedHeight > 0) {
+                list.push({ label: "Dimensions", value: viewerLoader.item.paintedWidth + " × " + viewerLoader.item.paintedHeight + " px" })
             }
-            if (imageViewer.frameCount > 0) {
-                list.push({ label: "Frame Count", value: imageViewer.frameCount })
+            if (viewerLoader.item && viewerLoader.item.frameCount > 0) {
+                list.push({ label: "Frame Count", value: viewerLoader.item.frameCount })
             }
-            if (imageViewer.currentFrame !== undefined) {
-                list.push({ label: "Current Frame", value: imageViewer.currentFrame + 1 })
+            if (viewerLoader.item && viewerLoader.item.currentFrame !== undefined) {
+                list.push({ label: "Current Frame", value: viewerLoader.item.currentFrame + 1 })
             }
         } else if (window.isMarkdown) {
             list.push({ label: "Media Type", value: "Markdown" })
-            if (markdownViewer.content) {
-                const lineCount = markdownViewer.content.split('\n').length
-                const charCount = markdownViewer.content.length
+            if (markdownViewerLoader.item && markdownViewerLoader.item.content) {
+                const lineCount = markdownViewerLoader.item.content.split('\n').length
+                const charCount = markdownViewerLoader.item.content.length
                 list.push({ label: "Lines", value: lineCount })
                 list.push({ label: "Characters", value: charCount.toLocaleString() })
             }
         } else if (window.isText) {
             list.push({ label: "Media Type", value: "Text" })
-            if (textViewer.lineCount > 0) {
-                list.push({ label: "Lines", value: textViewer.lineCount.toLocaleString() })
-                list.push({ label: "Characters", value: textViewer.characterCount.toLocaleString() })
-                list.push({ label: "Status", value: textViewer.modified ? "Modified" : "Saved" })
+            if (textViewerLoader.item && textViewerLoader.item.lineCount > 0) {
+                list.push({ label: "Lines", value: textViewerLoader.item.lineCount.toLocaleString() })
+                list.push({ label: "Characters", value: textViewerLoader.item.characterCount.toLocaleString() })
+                list.push({ label: "Status", value: textViewerLoader.item.modified ? "Modified" : "Saved" })
             }
         } else if (window.isPdf) {
             list.push({ label: "Media Type", value: "PDF Document" })
-            if (pdfViewer.isLoaded) {
-                list.push({ label: "Pages", value: pdfViewer.pageCount.toLocaleString() })
-                list.push({ label: "Current Page", value: pdfViewer.currentPage + " / " + pdfViewer.pageCount })
-                list.push({ label: "Zoom", value: Math.round(pdfViewer.zoomLevel * 100) + "%" })
+            if (pdfViewerLoader.item && pdfViewerLoader.item.isLoaded) {
+                list.push({ label: "Pages", value: pdfViewerLoader.item.pageCount.toLocaleString() })
+                list.push({ label: "Current Page", value: pdfViewerLoader.item.currentPage + " / " + pdfViewerLoader.item.pageCount })
+                list.push({ label: "Zoom", value: Math.round(pdfViewerLoader.item.zoomLevel * 100) + "%" })
             }
         } else {
             list.push({ label: "Media Type", value: "Image" })
-            if (imageViewer.paintedWidth > 0 && imageViewer.paintedHeight > 0) {
-                list.push({ label: "Dimensions", value: imageViewer.paintedWidth + " × " + imageViewer.paintedHeight + " px" })
+            if (viewerLoader.item && viewerLoader.item.paintedWidth > 0 && viewerLoader.item.paintedHeight > 0) {
+                list.push({ label: "Dimensions", value: viewerLoader.item.paintedWidth + " × " + viewerLoader.item.paintedHeight + " px" })
             }
-            if (imageViewer.status !== undefined) {
+            if (viewerLoader.item && viewerLoader.item.status !== undefined) {
                 const statuses = ["Null", "Ready", "Loading", "Error"]
-                list.push({ label: "Status", value: statuses[imageViewer.status] || "Unknown" })
+                list.push({ label: "Status", value: statuses[viewerLoader.item.status] || "Unknown" })
             }
         }
         
@@ -923,10 +1262,21 @@ ApplicationWindow {
             Rectangle {
                 id: viewer
                 anchors.fill: parent
-                color: Qt.darker(window.accentColor, 1.15)
+                color: window.backdropBlurEnabled
+                       ? "transparent"  // Completely transparent when backdrop blur is active
+                       : (window.ambientGradientEnabled
+                          ? "transparent"  // Transparent when ambient gradient is active
+                          : (window.snowEffectEnabled
+                             ? "transparent"  // Transparent when snow effect is active
+                             : (window.gradientBackgroundEnabled && window.paletteColors && window.paletteColors.length > 1
+                                ? Qt.rgba(0, 0, 0, 0.15)  // Less dark overlay when gradient is active
+                                : Qt.darker(window.accentColor, 1.15))))  // Solid color when gradient is off
                 clip: true
                 focus: true
                 property int padding: 0
+                border.width: 0  // Ensure no border is visible
+                border.color: "transparent"  // Ensure border color is transparent too
+                // Don't set opacity to 0 - it makes children invisible too
 
                 WheelHandler {
                     id: wheel
@@ -965,11 +1315,13 @@ ApplicationWindow {
                     onTapped: {
                         if (window.isVideo && window.currentImage !== "") {
                             // Toggle play/pause based on playbackState
-                            const wasPlaying = videoPlayer.playbackState === MediaPlayer.PlayingState
-                            if (wasPlaying) {
-                                videoPlayer.pause()
-                            } else {
-                                videoPlayer.play()
+                            if (videoPlayerLoader.item) {
+                                const wasPlaying = videoPlayerLoader.item.playbackState === MediaPlayer.PlayingState
+                                if (wasPlaying) {
+                                    videoPlayerLoader.item.pause()
+                                } else {
+                                    videoPlayerLoader.item.play()
+                                }
                             }
                         }
                     }
@@ -993,7 +1345,9 @@ ApplicationWindow {
                         imageViewer.panY += (translation.y - prevY) / factor
                         prevX = translation.x
                         prevY = translation.y
-                        imageViewer.clampPan()
+                        if (viewerLoader.item) {
+                            viewerLoader.item.clampPan()
+                        }
                     }
                 }
 
@@ -1005,12 +1359,19 @@ ApplicationWindow {
                     onDropped: function(drop) {
                         window.dropActive = false
                         if (drop.hasUrls && drop.urls.length > 0) {
-                            window.currentImage = drop.urls[0]
+                            const fileUrl = drop.urls[0]
+                            logToDebugConsole("[QML] File dropped, setting currentImage: " + fileUrl.toString(), "info")
+                            // Ensure window is visible when dropping file
+                            if (!window.visible) {
+                                window.show()
+                                window.raise()
+                            }
+                            window.currentImage = fileUrl
                             drop.acceptProposedAction()
                         }
                     }
                 }
-                
+
                 // Empty state placeholder
                 Column {
                     id: emptyStatePlaceholder
@@ -1147,29 +1508,39 @@ ApplicationWindow {
                     }
                 }
 
-                // Image viewer component
+                // Image viewer component - wrapped in Loader to allow recreation on reuse
+                // CRITICAL: Loader recreates the ImageViewer each time, ensuring proper scene graph rebinding
+                // This fixes the issue where Image/AnimatedImage don't reload after window hide/show
+                Loader {
+                    id: viewerLoader
+                    anchors.fill: parent
+                    active: false  // Start inactive, will be activated when image is loaded
+                    visible: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && !window.isPdf && window.currentImage !== ""
+                    
+                    sourceComponent: Component {
                 ImageViewer {
                     id: imageViewer
                         anchors.fill: parent
-                    source: (!window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && !window.isPdf && window.currentImage !== "") ? window.currentImage : ""
+                            source: window.currentImage
                     isGif: window.isGif
                     zoomFactor: window.zoomFactor
                     panX: window.panX
                     panY: window.panY
                     accentColor: window.accentColor
-                    visible: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && !window.isPdf && window.currentImage !== ""
                     
                     onImageReady: {
-                        // Log duration FIRST so image appears immediately
-                        window.logLoadDuration(window.isGif ? "GIF ready" : "Image ready", imageViewer.source)
-                        // Then update accent color after a short delay (doesn't block image display)
-                        accentColorTimer.restart()
-                    }
-                    
-                    Timer {
-                        id: accentColorTimer
-                        interval: 50  // Small delay to let image render first
-                        onTriggered: window.updateAccentColor()
+                                // Log duration FIRST so image appears immediately
+                                window.logLoadDuration(window.isGif ? "GIF ready" : "Image ready", imageViewer.source)
+                                // Then update accent color after a short delay (doesn't block image display)
+                                accentColorTimer.restart()
+                                
+                                // Log memory after image loads
+                                Qt.callLater(function() {
+                                    if (typeof ColorUtils !== "undefined" && ColorUtils.getMemoryUsage) {
+                                        const memAfter = ColorUtils.getMemoryUsage()
+                                        window.logToDebugConsole("[Memory] After image load: " + memAfter.toFixed(2) + " MB", "info")
+                                    }
+                                })
                     }
                     
                     onPaintedSizeChanged: {
@@ -1180,21 +1551,29 @@ ApplicationWindow {
                         target: window
                         property: "zoomFactor"
                         value: imageViewer.zoomFactor
-                        when: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && !window.isPdf
+                                when: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && !window.isPdf
                     }
                     
                     Binding {
                         target: window
                         property: "panX"
                         value: imageViewer.panX
-                        when: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && !window.isPdf
+                                when: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && !window.isPdf
                     }
                     
                     Binding {
                         target: window
                         property: "panY"
                         value: imageViewer.panY
-                        when: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && !window.isPdf
+                                when: !window.isVideo && !window.isAudio && !window.isMarkdown && !window.isText && !window.isPdf
+                            }
+                            
+                            Timer {
+                                id: accentColorTimer
+                                interval: 50  // Small delay to let image render first
+                                onTriggered: window.updateAccentColor()
+                            }
+                        }
                     }
                 }
                 
@@ -1231,19 +1610,27 @@ ApplicationWindow {
                         imageControlsHideTimer.restart()
                     }
                     onFitToWindowClicked: {
-                        imageViewer.fitToWindow()
+                        if (viewerLoader.item) {
+                            viewerLoader.item.fitToWindow()
+                        }
                         imageControlsHideTimer.restart()
                     }
                     onActualSizeClicked: {
-                        imageViewer.actualSize()
+                        if (viewerLoader.item) {
+                            viewerLoader.item.actualSize()
+                        }
                         imageControlsHideTimer.restart()
                     }
                     onRotateLeftClicked: {
-                        imageViewer.rotateLeft()
+                        if (viewerLoader.item) {
+                            viewerLoader.item.rotateLeft()
+                        }
                         imageControlsHideTimer.restart()
                     }
                     onRotateRightClicked: {
-                        imageViewer.rotateRight()
+                        if (viewerLoader.item) {
+                            viewerLoader.item.rotateRight()
+                        }
                         imageControlsHideTimer.restart()
                     }
                     
@@ -1363,159 +1750,193 @@ ApplicationWindow {
                     }
                 }
 
-                // Video player component
-                VideoPlayer {
-                    id: videoPlayer
+                // Video player component - wrapped in Loader for proper recreation
+                Loader {
+                    id: videoPlayerLoader
                     anchors.fill: parent
-                    source: window.isVideo ? window.currentImage : ""
-                    volume: window.videoVolume
-                    showControls: true
-                    accentColor: window.accentColor
-                    foregroundColor: window.foregroundColor
+                    active: false
                     visible: window.isVideo && window.currentImage !== ""
                     
-                    onDurationAvailable: {
-                            if (videoPlayer.duration > 0) {
-                                console.log("[Video] Duration available:", videoPlayer.duration, "ms")
-                                window.logLoadDuration("Video ready", videoPlayer.source)
+                    sourceComponent: Component {
+                        VideoPlayer {
+                            id: videoPlayer
+                            anchors.fill: parent
+                            source: window.currentImage
+                            volume: window.videoVolume
+                            showControls: true
+                            accentColor: window.accentColor
+                            foregroundColor: window.foregroundColor
+                            
+                            onDurationAvailable: {
+                                if (videoPlayer.duration > 0) {
+                                    console.log("[Video] Duration available:", videoPlayer.duration, "ms")
+                                    window.logLoadDuration("Video ready", videoPlayer.source)
+                                    if (window.showingMetadata) {
+                                        Qt.callLater(function() {
+                                            if (metadataPopup) {
+                                                metadataPopup.metadataList = window.getMetadataList()
+                                            }
+                                        })
+                                    }
+                                }
+                            }
+                            
+                            Binding {
+                                target: window
+                                property: "videoVolume"
+                                value: videoPlayer.volume
+                            }
+                        }
+                    }
+                }
+                // Audio player component - wrapped in Loader for proper recreation
+                Loader {
+                    id: audioPlayerLoader
+                    anchors.fill: parent
+                    active: false
+                    visible: window.isAudio && window.currentImage !== ""
+                    
+                    sourceComponent: Component {
+                        AudioPlayer {
+                            id: audioPlayer
+                            anchors.fill: parent
+                            source: window.currentImage
+                            volume: window.audioVolume
+                            showControls: true
+                            coverArt: window.audioCoverArt
+                            accentColor: window.accentColor
+                            foregroundColor: window.foregroundColor
+                            showingMetadata: window.showingMetadata
+                            betaAudioProcessingEnabled: window.betaAudioProcessingEnabled
+                            
+                            onDurationAvailable: {
+                                if (audioPlayer.duration > 0) {
+                                    console.log("[Audio] Duration available:", audioPlayer.duration, "ms")
+                                    // Debounce: Only update if duration changed significantly
+                                    // This prevents infinite loops from rapid duration updates
+                                    const lastDuration = window.lastAudioDuration || 0
+                                    if (Math.abs(audioPlayer.duration - lastDuration) > 100) {
+                                        window.lastAudioDuration = audioPlayer.duration
+                                        window.logLoadDuration("Audio ready", audioPlayer.source)
+                                        // Get format info with the actual duration (async to avoid blocking)
+                                        Qt.callLater(function() {
+                                            window.getAudioFormatInfo(audioPlayer.duration)
+                                        })
+                                        // Extract cover art when duration is available (metadata should be ready)
+                                        window.extractAudioCoverArt()
+                                        // Always refresh metadata list when duration is available
+                                        Qt.callLater(function() {
+                                            if (metadataPopup) {
+                                                metadataPopup.metadataList = window.getMetadataList()
+                                            }
+                                        })
+                                    }
+                                }
+                            }
+                            
+                            Connections {
+                                target: window
+                                function onAudioCoverArtChanged() {
+                                    // Cover art is already bound via coverArt: window.audioCoverArt
+                                    // Just update accent color when cover art changes
+                                    if (window.audioCoverArt !== "") {
+                                        Qt.callLater(function() {
+                                            window.updateAccentColor()
+                                        })
+                                    }
+                                }
+                            }
+                            
+                            Binding {
+                                target: window
+                                property: "audioVolume"
+                                value: audioPlayer.volume
+                            }
+                        }
+                    }
+                }
+                
+                // Markdown viewer component - wrapped in Loader for proper recreation
+                Loader {
+                    id: markdownViewerLoader
+                    anchors.fill: parent
+                    active: false
+                    visible: window.isMarkdown && window.currentImage !== ""
+                    
+                    sourceComponent: Component {
+                        MarkdownViewer {
+                            id: markdownViewer
+                            anchors.fill: parent
+                            source: window.currentImage
+                            accentColor: window.accentColor
+                            foregroundColor: window.foregroundColor
+                            
+                            onContentChanged: {
+                                if (window.isMarkdown && markdownViewer.content !== "" && markdownViewer.source !== "") {
+                                    window.logLoadDuration("Markdown ready", markdownViewer.source)
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Text viewer component - wrapped in Loader for proper recreation
+                Loader {
+                    id: textViewerLoader
+                    anchors.fill: parent
+                    active: false
+                    visible: window.isText && window.currentImage !== ""
+                    
+                    sourceComponent: Component {
+                        TextViewer {
+                            id: textViewer
+                            anchors.fill: parent
+                            source: window.currentImage
+                            accentColor: window.accentColor
+                            foregroundColor: window.foregroundColor
+                            
+                            onSaved: {
+                                saveToast.show("File saved successfully", false)
+                            }
+                            
+                            onSaveError: function(message) {
+                                saveToast.show(message, true)
+                            }
+                            
+                            onContentLoaded: {
+                                if (window.isText && textViewer.content !== "" && textViewer.source !== "") {
+                                    window.logLoadDuration("Text ready", textViewer.source)
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // PDF viewer component - wrapped in Loader for proper recreation
+                Loader {
+                    id: pdfViewerLoader
+                    anchors.fill: parent
+                    active: false
+                    visible: window.isPdf && window.currentImage !== ""
+                    
+                    sourceComponent: Component {
+                        PdfViewer {
+                            id: pdfViewer
+                            anchors.fill: parent
+                            source: window.currentImage
+                            accentColor: window.accentColor
+                            foregroundColor: window.foregroundColor
+                            
+                            onLoaded: {
+                                window.logLoadDuration("PDF ready", pdfViewer.source)
                                 if (window.showingMetadata) {
                                     Qt.callLater(function() {
                                         if (metadataPopup) {
                                             metadataPopup.metadataList = window.getMetadataList()
                                         }
                                     })
-                            }
-                        }
-                    }
-                    
-                    Binding {
-                        target: window
-                        property: "videoVolume"
-                        value: videoPlayer.volume
-                    }
-                }
-                // Audio player component
-                AudioPlayer {
-                    id: audioPlayer
-                            anchors.fill: parent
-                    source: window.isAudio ? window.currentImage : ""
-                    volume: window.audioVolume
-                    showControls: true
-                    coverArt: window.audioCoverArt
-                    accentColor: window.accentColor
-                    foregroundColor: window.foregroundColor
-                    showingMetadata: window.showingMetadata
-                    visible: window.isAudio && window.currentImage !== ""
-                    betaAudioProcessingEnabled: window.betaAudioProcessingEnabled
-                    
-                    onDurationAvailable: {
-                        if (audioPlayer.duration > 0) {
-                            console.log("[Audio] Duration available:", audioPlayer.duration, "ms")
-                            // Debounce: Only update if duration changed significantly
-                            // This prevents infinite loops from rapid duration updates
-                            const lastDuration = window.lastAudioDuration || 0
-                            if (Math.abs(audioPlayer.duration - lastDuration) > 100) {
-                                window.lastAudioDuration = audioPlayer.duration
-                                window.logLoadDuration("Audio ready", audioPlayer.source)
-                                // Get format info with the actual duration (async to avoid blocking)
-                                Qt.callLater(function() {
-                                    window.getAudioFormatInfo(audioPlayer.duration)
-                                })
-                                // Extract cover art when duration is available (metadata should be ready)
-                                window.extractAudioCoverArt()
-                                // Always refresh metadata list when duration is available
-                                Qt.callLater(function() {
-                                    if (metadataPopup) {
-                                        metadataPopup.metadataList = window.getMetadataList()
-                                    }
-                                })
-                            }
-                        }
-                    }
-                    
-                    Connections {
-                        target: window
-                        function onAudioCoverArtChanged() {
-                            // Cover art is already bound via coverArt: window.audioCoverArt
-                            // Just update accent color when cover art changes
-                            if (window.audioCoverArt !== "") {
-                                Qt.callLater(function() {
-                                    window.updateAccentColor()
-                                })
-                            }
-                        }
-                    }
-                    
-                    Binding {
-                        target: window
-                        property: "audioVolume"
-                        value: audioPlayer.volume
-                    }
-                }
-                
-                // Markdown viewer component
-                MarkdownViewer {
-                    id: markdownViewer
-                    anchors.fill: parent
-                    source: window.isMarkdown ? window.currentImage : ""
-                    accentColor: window.accentColor
-                    foregroundColor: window.foregroundColor
-                    visible: window.isMarkdown && window.currentImage !== ""
-                }
-
-                Connections {
-                    target: markdownViewer
-                    function onContentChanged() {
-                        if (window.isMarkdown && markdownViewer.content !== "" && markdownViewer.source !== "") {
-                            window.logLoadDuration("Markdown ready", markdownViewer.source)
-                        }
-                    }
-                }
-                
-                // Text viewer component
-                TextViewer {
-                    id: textViewer
-                    anchors.fill: parent
-                    source: window.isText ? window.currentImage : ""
-                    accentColor: window.accentColor
-                    foregroundColor: window.foregroundColor
-                    visible: window.isText && window.currentImage !== ""
-                    
-                    onSaved: {
-                        saveToast.show("File saved successfully", false)
-                    }
-                    
-                    onSaveError: function(message) {
-                        saveToast.show(message, true)
-                    }
-                }
-
-                Connections {
-                    target: textViewer
-                    function onContentLoaded() {
-                        if (window.isText && textViewer.content !== "" && textViewer.source !== "") {
-                            window.logLoadDuration("Text ready", textViewer.source)
-                        }
-                    }
-                }
-                
-                // PDF viewer component
-                PdfViewer {
-                    id: pdfViewer
-                    anchors.fill: parent
-                    source: window.isPdf ? window.currentImage : ""
-                    accentColor: window.accentColor
-                    foregroundColor: window.foregroundColor
-                    visible: window.isPdf && window.currentImage !== ""
-                    
-                    onLoaded: {
-                        window.logLoadDuration("PDF ready", pdfViewer.source)
-                        if (window.showingMetadata) {
-                            Qt.callLater(function() {
-                                if (metadataPopup) {
-                                    metadataPopup.metadataList = window.getMetadataList()
                                 }
-                            })
+                            }
                         }
                     }
                 }
@@ -1585,12 +2006,45 @@ ApplicationWindow {
             accentColor: window.accentColor
             foregroundColor: window.foregroundColor
             dynamicColoringEnabled: window.dynamicColoringEnabled
+            gradientBackgroundEnabled: window.gradientBackgroundEnabled
+            backdropBlurEnabled: window.backdropBlurEnabled
+            ambientGradientEnabled: window.ambientGradientEnabled
+            snowEffectEnabled: window.snowEffectEnabled
             
             onBackClicked: window.showingSettings = false
             onDynamicColoringToggled: function(enabled) {
                 window.dynamicColoringEnabled = enabled
-                        window.updateAccentColor()
-                    }
+                window.updateAccentColor()
+            }
+            onGradientBackgroundToggled: function(enabled) {
+                window.gradientBackgroundEnabled = enabled
+                if (enabled) {
+                    window.backdropBlurEnabled = false  // Disable backdrop blur when gradient is enabled
+                    window.ambientGradientEnabled = false  // Disable ambient gradient when gradient is enabled
+                    // Snow can layer on top, so don't disable it
+                }
+                window.updateAccentColor()
+            }
+            onBackdropBlurToggled: function(enabled) {
+                window.backdropBlurEnabled = enabled
+                if (enabled) {
+                    window.gradientBackgroundEnabled = false  // Disable gradient when backdrop blur is enabled
+                    window.ambientGradientEnabled = false  // Disable ambient gradient when backdrop blur is enabled
+                    // Snow can layer on top, so don't disable it
+                }
+            }
+            onAmbientGradientToggled: function(enabled) {
+                window.ambientGradientEnabled = enabled
+                if (enabled) {
+                    window.gradientBackgroundEnabled = false  // Disable gradient when ambient gradient is enabled
+                    window.backdropBlurEnabled = false  // Disable backdrop blur when ambient gradient is enabled
+                    // Snow can layer on top, so don't disable it
+                }
+            }
+            onSnowEffectToggled: function(enabled) {
+                window.snowEffectEnabled = enabled
+                // Snow can layer on top of other effects, so no need to disable them
+            }
         }
     }
 
@@ -1614,7 +2068,15 @@ ApplicationWindow {
             qsTr("Text (*.txt *.log *.nfo *.csv *.diff *.patch)"),
             qsTr("All files (*)")
         ]
-        onAccepted: window.currentImage = selectedFile
+        onAccepted: {
+            logToDebugConsole("[QML] FileDialog accepted, setting currentImage: " + selectedFile.toString(), "info")
+            // Ensure window is visible when loading file
+            if (!window.visible) {
+                window.show()
+                window.raise()
+            }
+            window.currentImage = selectedFile
+        }
     }
 
     Shortcut {
@@ -1647,11 +2109,173 @@ ApplicationWindow {
         onActivated: window.navigateToImage(window.directoryImages.length - 1)
     }
 
+    // Handle close event - minimize to tray instead of closing
+    onClosing: function(close) {
+        if (isMainWindow) {
+            // Main window: minimize to tray
+            // Prevent close FIRST - this is critical
+            close.accepted = false
+            
+            // Mark that we're hiding with media (if any)
+            wasHiddenWithMedia = (currentImage !== "")
+            
+            // HIDE WINDOW FIRST, then unload media
+            // This ensures the window disappears immediately
+            window.visible = false
+            window.hide()
+            
+            // Unload media after hiding (this can happen in background)
+            unloadMedia()
+        } else {
+            // Secondary window: WINDOW POOLING - hide instead of destroy
+            // Prevent close - we want to hide, not destroy (window pooling)
+            close.accepted = false
+            
+            // Unload media before hiding (this clears image content)
+            unloadMedia()
+            
+            // Hide the window - window stays alive and can be reused later (window pooling)
+            // NOTE: currentImage is already cleared by unloadMedia()
+            // NOTE: Busy flag will be updated when window is reused (in resetForReuse)
+            window.visible = false
+            window.hide()
+        }
+    }
+
+    // Track if window was hidden with media loaded
+    property bool wasHiddenWithMedia: false
+    
+    onVisibleChanged: {
+        if (visible && wasHiddenWithMedia) {
+            // Window is being shown after being hidden with media
+            // Clear any residual media immediately
+            wasHiddenWithMedia = false
+            unloadMedia()
+        }
+    }
+    
+    // When secondary window is about to be destroyed, ensure everything is cleaned up
+    Component.onDestruction: {
+        if (!isMainWindow) {
+            // Final cleanup before destruction - clear all references
+            _isUnloading = true
+            currentImage = ""
+            initialImage = ""
+            directoryImages = []
+            currentImageIndex = 0
+            audioCoverArt = ""
+            audioFormatInfo = { sampleRate: 0, bitrate: 0 }
+            
+            // Clear all media components
+            unloadAllViewers()
+            
+            // Clear Qt image cache one more time
+            if (typeof ColorUtils !== "undefined" && ColorUtils.clearImageCache) {
+                ColorUtils.clearImageCache()
+            }
+        }
+    }
+
+    // Function to reset window state for reuse (called by C++ before reusing)
+    function resetForReuse() {
+        logToDebugConsole("[QML] resetForReuse() called - resetting window state", "info")
+        
+        // CRITICAL: Set unloading flag to prevent onCurrentImageChanged from loading
+        // when C++ sets currentImage to empty (which happens before setting new image)
+        _isUnloading = true
+        
+        // CRITICAL: Unload all viewers via Loaders to destroy components
+        // This ensures proper cleanup and allows recreation on next load
+        unloadAllViewers()
+        
+        // Clear unloading flag AFTER unload is complete - next image load will work
+        // This flag will be cleared when the new image is set (onCurrentImageChanged will handle it)
+        
+        // Reset media type flags
+        isVideo = false
+        isGif = false
+        isAudio = false
+        isMarkdown = false
+        isText = false
+        isPdf = false
+        
+        // Clear media properties
+        directoryImages = []
+        currentImageIndex = 0
+        audioCoverArt = ""
+        audioFormatInfo = { sampleRate: 0, bitrate: 0 }
+        
+        logToDebugConsole("[QML] resetForReuse() complete - window ready for new image", "info")
+    }
+
     Component.onCompleted: {
-        if (initialImage !== "")
+        // CRITICAL: Limit Qt's global image cache to prevent excessive RAM usage
+        // This alone can cut RAM growth in half
+        Qt.imageCacheSize = 32 * 1024 * 1024  // 32 MB (can be increased to 64 MB if needed)
+        logToDebugConsole("[App] Set Qt.imageCacheSize to 32 MB", "info")
+        
+        // Test logging to verify debug console is working
+        console.log("[App] Application started - Component.onCompleted")
+        logToDebugConsole("[App] Application started", "info")
+        
+        // Check debug console connection (it might be set later by main.cpp)
+        Qt.callLater(function() {
+            if (debugConsole) {
+                logToDebugConsole("[App] Debug console connected", "info")
+            } else {
+                console.log("[App] WARNING: Debug console not connected yet (will be set by main.cpp)")
+                // Try again after a short delay
+                Qt.callLater(function() {
+                    if (debugConsole) {
+                        logToDebugConsole("[App] Debug console connected (delayed)", "info")
+                    } else {
+                        console.log("[App] ERROR: Debug console still not connected")
+                    }
+                }, 100)
+            }
+        })
+        
+        // CRITICAL: Do NOT load from initialImage here - loading happens ONLY via onCurrentImageChanged
+        // This ensures windows can be reused properly (Component.onCompleted only runs once)
+        // If initialImage was set, it will be copied to currentImage by C++ after window creation
+        if (initialImage !== "") {
+            // Only set currentImage if initialImage was provided (for first-time creation)
+            // This triggers onCurrentImageChanged which handles the actual loading
             currentImage = initialImage
-        else
+        } else {
             updateAccentColor()
+    }
+}
+
+    // Bass pulse window - transparent window with pulsing rounded rectangles
+    BassPulseWindow {
+        id: bassPulseWindow
+        mainWindow: window
+        bassAmplitude: (window.isAudio && audioPlayerLoader.item && audioPlayerLoader.item.analyzer) ? (audioPlayerLoader.item.analyzer.bassAmplitude || 0.0) : 0.0
+        enabled: window.isAudio && audioPlayerLoader.item && audioPlayerLoader.item.analyzer && audioPlayerLoader.item.analyzer.active && audioPlayerLoader.item.analyzer.bassAmplitude > 0.1
+        pulseColor: accentColor  // Use dynamic accent color
+        
+        onVisibleChanged: {
+            if (visible) {
+                // Ensure main window stays on top
+                Qt.callLater(function() {
+                    window.raise()
+                    window.requestActivate()
+                })
+            }
+        }
+    }
+    
+    // Keep main window on top when bass pulse is visible (less frequent to avoid flicker)
+    Timer {
+        interval: 500
+        running: bassPulseWindow.visible
+        repeat: true
+        onTriggered: {
+            if (bassPulseWindow.visible) {
+                window.raise()
+            }
+        }
     }
 }
 

@@ -27,6 +27,7 @@ class AudioVisualizer : public QObject
     Q_OBJECT
     Q_PROPERTY(QVariantList frequencyBands READ frequencyBands NOTIFY frequencyBandsChanged)
     Q_PROPERTY(qreal overallAmplitude READ overallAmplitude NOTIFY overallAmplitudeChanged)
+    Q_PROPERTY(qreal bassAmplitude READ bassAmplitude NOTIFY bassAmplitudeChanged)
     Q_PROPERTY(bool active READ active NOTIFY activeChanged)
 
 public:
@@ -42,11 +43,13 @@ public:
     
     QVariantList frequencyBands() const { return m_frequencyBands; }
     qreal overallAmplitude() const { return m_overallAmplitude; }
+    qreal bassAmplitude() const { return m_bassAmplitude; }
     bool active() const { return m_active; }
 
 signals:
     void frequencyBandsChanged();
     void overallAmplitudeChanged();
+    void bassAmplitudeChanged();
     void activeChanged();
 
 private slots:
@@ -67,6 +70,7 @@ private:
     QVector<qreal> m_samples;
     QVariantList m_frequencyBands;
     qreal m_overallAmplitude;
+    qreal m_bassAmplitude;
     bool m_active;
     bool m_useDirectFeed;  // Use direct audio feed instead of WASAPI loopback
     QAudioFormat m_audioFormat;  // Format for direct feed

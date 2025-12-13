@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Window
 
 Item {
     id: imageViewer
@@ -29,6 +30,24 @@ Item {
         panX = 0
         panY = 0
         rotation = 0
+    }
+    
+    function clearSource() {
+        // Make components invisible FIRST to prevent any rendering
+        photo.visible = false
+        animatedGif.visible = false
+        animatedGif.playing = false
+        
+        // Clear the source property - this will trigger bound components to clear
+        source = ""
+        
+        // Explicitly clear the internal image components immediately (synchronous)
+        // This ensures memory is released before window closes
+        photo.source = ""
+        animatedGif.source = ""
+        
+        // Note: status is read-only, so we can't set it directly
+        // Clearing the source should be enough to release resources
     }
     
     function fitToWindow() {
@@ -160,11 +179,17 @@ Item {
             anchors.fill: parent
             fillMode: Image.PreserveAspectFit
             asynchronous: true
-            cache: true  // Enable caching for faster re-loads
-            smooth: true
-            mipmap: true  // Enable mipmapping for better scaled image quality
+            cache: false  // Disable caching to allow proper memory release
+            smooth: false  // Disable smooth to reduce memory
+            mipmap: false  // Disable mipmapping to reduce memory usage
+            // NOTE: sourceSize removed - was causing memory increases
+            // Qt will automatically choose appropriate decode size based on display size
             visible: !imageViewer.isGif && imageViewer.source !== ""
             source: (!imageViewer.isGif && imageViewer.source !== "") ? imageViewer.source : ""
+            
+            // Force release when source is cleared
+            // Note: status is read-only, so we can't set it directly
+            // Clearing source is sufficient to release resources
             onStatusChanged: {
                 if (status === Image.Ready) {
                     imageReady()
@@ -186,11 +211,23 @@ Item {
             anchors.fill: parent
             fillMode: AnimatedImage.PreserveAspectFit
             asynchronous: true
-            cache: true  // Enable caching for faster re-loads
-            smooth: true
+            cache: false  // Disable caching to allow proper memory release
+            smooth: false  // Disable smooth to reduce memory
+            // NOTE: sourceSize removed - was causing memory increases
+            // Qt will automatically choose appropriate decode size based on display size
             visible: imageViewer.isGif && imageViewer.source !== ""
             source: (imageViewer.isGif && imageViewer.source !== "") ? imageViewer.source : ""
-            playing: true
+            playing: imageViewer.isGif && imageViewer.source !== ""
+            
+            // Force release when source is cleared
+            onSourceChanged: {
+                if (source === "") {
+                    // Force immediate cleanup
+                    playing = false
+                    // Note: status is read-only, so we can't set it directly
+                    // Clearing source and stopping playback is sufficient to release resources
+                }
+            }
             onStatusChanged: {
                 if (status === AnimatedImage.Ready) {
                     imageReady()

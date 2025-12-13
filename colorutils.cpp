@@ -28,7 +28,22 @@
 #include <QStandardPaths>
 #include <QSettings>
 #include <QCoreApplication>
+#include <QGuiApplication>
+#include <QClipboard>
 #include <QDesktopServices>
+#include <QImageReader>
+#include <QQmlEngine>
+#include <QQuickImageProvider>
+#include <QProcess>
+#include <QStandardPaths>
+#include <QLinearGradient>
+#include <QGradient>
+#include <QVariantMap>
+#include <QtMath>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <psapi.h>
+#endif
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -248,6 +263,345 @@ QColor ColorUtils::dominantColor(const QUrl &sourceUrl) const
     return QColor(r, g, b);
 }
 
+QVariantList ColorUtils::extractPaletteColors(const QUrl &sourceUrl, int count) const
+{
+    QVariantList result;
+    
+    const QString localPath = sourceUrl.isLocalFile()
+            ? sourceUrl.toLocalFile()
+            : sourceUrl.toString(QUrl::PreferLocalFile);
+
+    if (localPath.isEmpty() || !QFileInfo::exists(localPath))
+        return result;
+
+    QImageReader reader(localPath);
+    reader.setAutoTransform(true);
+    
+    // Downscale to ~80x80 for faster computation (smaller = faster, still enough for color extraction)
+    QSize size = reader.size();
+    if (!size.isValid()) {
+        size = QSize(80, 80);
+    } else {
+        size.scale(80, 80, Qt::KeepAspectRatio);
+    }
+    reader.setScaledSize(size);
+
+    QImage image = reader.read();
+    if (image.isNull())
+        return result;
+
+    image = image.convertToFormat(QImage::Format_RGBA8888);
+    const int width = image.width();
+    const int height = image.height();
+
+    // Step 1: Collect RGB points (skip transparent pixels)
+    struct RGBPoint {
+        double r, g, b;
+    };
+    QVector<RGBPoint> points;
+    points.reserve(width * height);
+
+    for (int y = 0; y < height; ++y) {
+        const uchar *line = image.constScanLine(y);
+        for (int x = 0; x < width; ++x) {
+            const uchar *pixel = line + x * 4;
+            const uchar alpha = pixel[3];
+            if (alpha < 128) // Skip semi-transparent pixels
+                continue;
+
+            RGBPoint pt;
+            pt.r = pixel[0];
+            pt.g = pixel[1];
+            pt.b = pixel[2];
+            points.append(pt);
+        }
+    }
+
+    if (points.isEmpty())
+        return result;
+
+    // Step 2: K-Means clustering with specified count
+    const int k = qBound(2, count, 10); // Limit between 2 and 10 colors
+    const int maxIterations = 12; // Reduced from 20 for faster processing (still converges well)
+    
+    struct Cluster {
+        double r, g, b;
+        int count;
+    };
+    
+    QVector<Cluster> centroids(k);
+    QVector<int> assignments(points.size());
+    
+    // Initialize centroids using k-means++ for better diversity
+    // First centroid: random point
+    QRandomGenerator *rng = QRandomGenerator::global();
+    int firstIdx = rng->bounded(points.size());
+    centroids[0].r = points[firstIdx].r;
+    centroids[0].g = points[firstIdx].g;
+    centroids[0].b = points[firstIdx].b;
+    centroids[0].count = 0;
+    
+    // Subsequent centroids: choose points far from existing centroids
+    for (int i = 1; i < k; ++i) {
+        QVector<double> distances(points.size());
+        double sumDistSq = 0.0;
+        
+        for (int p = 0; p < points.size(); ++p) {
+            double minDist = std::numeric_limits<double>::max();
+            // Find minimum distance to any existing centroid
+            for (int j = 0; j < i; ++j) {
+                double dr = points[p].r - centroids[j].r;
+                double dg = points[p].g - centroids[j].g;
+                double db = points[p].b - centroids[j].b;
+                double dist = dr * dr + dg * dg + db * db;
+                if (dist < minDist) {
+                    minDist = dist;
+                }
+            }
+            distances[p] = minDist;
+            sumDistSq += minDist;
+        }
+        
+        // Choose point with probability proportional to distance squared
+        double target = rng->bounded(sumDistSq);
+        double cumsum = 0.0;
+        int chosenIdx = 0;
+        for (int p = 0; p < points.size(); ++p) {
+            cumsum += distances[p];
+            if (cumsum >= target) {
+                chosenIdx = p;
+                break;
+            }
+        }
+        
+        centroids[i].r = points[chosenIdx].r;
+        centroids[i].g = points[chosenIdx].g;
+        centroids[i].b = points[chosenIdx].b;
+        centroids[i].count = 0;
+    }
+
+    // K-Means iterations
+    for (int iter = 0; iter < maxIterations; ++iter) {
+        // Assign each point to nearest centroid
+        for (int i = 0; i < points.size(); ++i) {
+            double minDist = std::numeric_limits<double>::max();
+            int bestCluster = 0;
+            
+            for (int j = 0; j < k; ++j) {
+                double dr = points[i].r - centroids[j].r;
+                double dg = points[i].g - centroids[j].g;
+                double db = points[i].b - centroids[j].b;
+                double dist = dr * dr + dg * dg + db * db;
+                
+                if (dist < minDist) {
+                    minDist = dist;
+                    bestCluster = j;
+                }
+            }
+            assignments[i] = bestCluster;
+        }
+
+        // Update centroids
+        QVector<Cluster> newCentroids(k);
+        for (int j = 0; j < k; ++j) {
+            newCentroids[j].r = 0;
+            newCentroids[j].g = 0;
+            newCentroids[j].b = 0;
+            newCentroids[j].count = 0;
+        }
+
+        for (int i = 0; i < points.size(); ++i) {
+            int cluster = assignments[i];
+            newCentroids[cluster].r += points[i].r;
+            newCentroids[cluster].g += points[i].g;
+            newCentroids[cluster].b += points[i].b;
+            newCentroids[cluster].count++;
+        }
+
+        // Check for convergence
+        bool converged = true;
+        for (int j = 0; j < k; ++j) {
+            if (newCentroids[j].count > 0) {
+                newCentroids[j].r /= newCentroids[j].count;
+                newCentroids[j].g /= newCentroids[j].count;
+                newCentroids[j].b /= newCentroids[j].count;
+                
+                // Check if centroid moved significantly
+                double dr = newCentroids[j].r - centroids[j].r;
+                double dg = newCentroids[j].g - centroids[j].g;
+                double db = newCentroids[j].b - centroids[j].b;
+                if (dr * dr + dg * dg + db * db > 1.0) {
+                    converged = false;
+                }
+            }
+            centroids[j] = newCentroids[j];
+        }
+
+        if (converged)
+            break;
+    }
+
+    // Step 3: Sort clusters by count (most common first) and filter out very dark and very light colors
+    QVector<QPair<int, Cluster>> sortedClusters;
+    for (int j = 0; j < k; ++j) {
+        if (centroids[j].count > 0) {
+            // Filter out very dark and very light colors
+            const int r = static_cast<int>(centroids[j].r);
+            const int g = static_cast<int>(centroids[j].g);
+            const int b = static_cast<int>(centroids[j].b);
+            const int maxRGB = qMax(qMax(r, g), b);
+            const int minRGB = qMin(qMin(r, g), b);
+            
+            // Only include colors that aren't too dark (brightness >= 60) and aren't too light/white (brightness < 240)
+            if (maxRGB >= 60 && maxRGB < 240) {
+                // Also check saturation - exclude very desaturated colors (grays/whites)
+                const int saturation = maxRGB > 0 ? ((maxRGB - minRGB) * 100 / maxRGB) : 0;
+                if (saturation >= 10) {  // At least 10% saturation to avoid grays
+                    sortedClusters.append(qMakePair(centroids[j].count, centroids[j]));
+                }
+            }
+        }
+    }
+    
+    // Sort by count (descending)
+    std::sort(sortedClusters.begin(), sortedClusters.end(),
+              [](const QPair<int, Cluster> &a, const QPair<int, Cluster> &b) {
+                  return a.first > b.first;
+              });
+    
+    // Convert to QColor list, ensuring colors aren't too dark or too light
+    for (const auto &pair : sortedClusters) {
+        const Cluster &cluster = pair.second;
+        int r = qBound(0, static_cast<int>(cluster.r), 255);
+        int g = qBound(0, static_cast<int>(cluster.g), 255);
+        int b = qBound(0, static_cast<int>(cluster.b), 255);
+        
+        // Ensure the color isn't too dark or too light for good visibility
+        const int maxRGB = qMax(qMax(r, g), b);
+        const int minRGB = qMin(qMin(r, g), b);
+        
+        // If too dark, brighten it (minimum brightness of 80 for gradient colors)
+        if (maxRGB < 80) {
+            const double factor = 80.0 / qMax(maxRGB, 1);
+            r = qBound(0, static_cast<int>(r * factor), 255);
+            g = qBound(0, static_cast<int>(g * factor), 255);
+            b = qBound(0, static_cast<int>(b * factor), 255);
+        }
+        
+        // If too light, darken it slightly
+        if (minRGB > 240) {
+            const double factor = 240.0 / minRGB;
+            r = qBound(0, static_cast<int>(r * factor), 255);
+            g = qBound(0, static_cast<int>(g * factor), 255);
+            b = qBound(0, static_cast<int>(b * factor), 255);
+        }
+        
+        result.append(QColor(r, g, b));
+    }
+    
+    // Post-process: Ensure colors are diverse (not too similar)
+    // If colors are too close, adjust them to be more distinct
+    if (result.size() >= 2) {
+        const double minColorDistance = 40.0 * 40.0; // Minimum squared distance between colors
+        
+        for (int i = 1; i < result.size(); ++i) {
+            QColor current = result[i].value<QColor>();
+            
+            // Check distance to all previous colors
+            for (int j = 0; j < i; ++j) {
+                QColor prev = result[j].value<QColor>();
+                double dr = current.red() - prev.red();
+                double dg = current.green() - prev.green();
+                double db = current.blue() - prev.blue();
+                double distSq = dr * dr + dg * dg + db * db;
+                
+                if (distSq < minColorDistance) {
+                    // Shift this color away from the previous one
+                    // Move in a random direction in color space
+                    double angle = rng->bounded(360.0) * M_PI / 180.0;
+                    double shift = sqrt(minColorDistance) - sqrt(distSq);
+                    
+                    int newR = qBound(0, static_cast<int>(current.red() + shift * cos(angle)), 255);
+                    int newG = qBound(0, static_cast<int>(current.green() + shift * sin(angle)), 255);
+                    int newB = qBound(0, static_cast<int>(current.blue() + shift * cos(angle + M_PI/3)), 255);
+                    
+                    current = QColor(newR, newG, newB);
+                    result[i] = current;  // Update the QVariantList
+                    break;
+                }
+            }
+        }
+    }
+    
+    // If we have fewer colors than requested, pad with diverse variations
+    while (result.size() < count && result.size() > 0) {
+        QColor last = result.last().value<QColor>();
+        // Create a variation with hue shift
+        QColor variation = last.toHsl();
+        int h = (variation.hue() + 30) % 360;
+        variation.setHsl(h, qBound(0, variation.saturation() + 20, 255), 
+                        qBound(0, variation.lightness() + (rng->bounded(2) ? 20 : -20), 255));
+        result.append(variation.toRgb());
+    }
+    
+    return result;
+}
+
+QVariantList ColorUtils::createGradientStops(const QVariantList &colors) const
+{
+    QVariantList stops;
+    
+    if (colors.isEmpty()) {
+        return stops;
+    }
+    
+    int numColors = colors.size();
+    if (numColors == 0) {
+        return stops;
+    }
+    
+    // Create gradient stops from colors
+    // Start with transparency
+    QVariantMap startStop;
+    startStop["position"] = 0.0;
+    startStop["color"] = QColor(255, 255, 255, 0);
+    stops.append(startStop);
+    
+    // Add each color as a stop, evenly distributed
+    for (int i = 0; i < numColors; i++) {
+        QVariant colorVar = colors[i];
+        if (!colorVar.isValid()) {
+            continue;
+        }
+        
+        QColor color = colorVar.value<QColor>();
+        if (!color.isValid()) {
+            continue;
+        }
+        
+        // Position from 0.1 to 0.9
+        qreal position = 0.1 + (i / qMax(1.0, (numColors - 1.0))) * 0.8;
+        
+        // Vary opacity for depth - stronger in the middle
+        qreal alpha = 0.15 + qSin((i / qMax(1.0, (numColors - 1.0))) * M_PI) * 0.1;
+        
+        QVariantMap stop;
+        stop["position"] = position;
+        QColor stopColor = color;
+        stopColor.setAlphaF(alpha);
+        stop["color"] = stopColor;
+        stops.append(stop);
+    }
+    
+    // End with transparency
+    QVariantMap endStop;
+    endStop["position"] = 1.0;
+    endStop["color"] = QColor(255, 255, 255, 0);
+    stops.append(endStop);
+    
+    return stops;
+}
+
 QUrl ColorUtils::extractCoverArt(const QUrl &audioUrl) const
 {
     const QString localPath = audioUrl.isLocalFile()
@@ -267,8 +621,8 @@ QUrl ColorUtils::extractCoverArt(const QUrl &audioUrl) const
     auto scaleAndSave = [](const QImage &image, const QString &tempPath) -> QUrl {
         if (image.isNull()) return QUrl();
         
-        // Scale down to max 600x600 for faster loading (cover art doesn't need full resolution)
-        const int maxSize = 600;
+        // Scale down to max 400x400 for faster loading (cover art doesn't need full resolution)
+        const int maxSize = 400;
         QImage scaledImage = image;
         if (image.width() > maxSize || image.height() > maxSize) {
             scaledImage = image.scaled(maxSize, maxSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
@@ -305,11 +659,12 @@ QUrl ColorUtils::extractCoverArt(const QUrl &audioUrl) const
         }
     }
     
-    // If not available immediately, wait with reasonable timeout
-    // Balance between speed and reliability
+    // If not available immediately, wait indefinitely for metadata
+    // This ensures we get the cover art even if it takes longer to load
     QEventLoop loop;
     QObject::connect(&player, &QMediaPlayer::metaDataChanged, &loop, &QEventLoop::quit);
-    QTimer::singleShot(300, &loop, &QEventLoop::quit); // 300ms timeout - enough for metadata to load
+    // Also connect to error signal to avoid infinite wait on errors
+    QObject::connect(&player, &QMediaPlayer::errorOccurred, &loop, &QEventLoop::quit);
     loop.exec();
 
     // Helper function to scale and save image (reuse from above)
@@ -784,5 +1139,47 @@ bool ColorUtils::registerAsDefaultImageViewer() const
     qDebug() << "[FileAssoc] Default app registration not implemented for this platform";
     return false;
 #endif
+}
+
+void ColorUtils::clearImageCache() const
+{
+    // Qt doesn't provide a direct API to clear the image cache,
+    // but we can try to reduce memory pressure by:
+    // 1. Setting a lower allocation limit temporarily
+    // 2. This forces Qt to release some cached images
+    
+    // Reduce image allocation limit to force cache clearing
+    int oldLimit = QImageReader::allocationLimit();
+    QImageReader::setAllocationLimit(0);  // Disable allocation temporarily
+    
+    // Force Qt to process events and release memory
+    QCoreApplication::processEvents();
+    
+    QImageReader::setAllocationLimit(oldLimit);  // Restore
+    
+    // Note: Qt's internal image cache is managed by QML engine
+    // and there's no direct way to clear it, but reducing allocation
+    // limit can help force some cleanup
+}
+
+qreal ColorUtils::getMemoryUsage() const
+{
+#ifdef Q_OS_WIN
+    PROCESS_MEMORY_COUNTERS_EX pmc;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) {
+        // Return memory usage in MB
+        return pmc.WorkingSetSize / (1024.0 * 1024.0);
+    }
+#endif
+    // Fallback for other platforms
+    return 0.0;
+}
+
+void ColorUtils::copyToClipboard(const QString &text) const
+{
+    QClipboard *clipboard = QGuiApplication::clipboard();
+    if (clipboard) {
+        clipboard->setText(text);
+    }
 }
 

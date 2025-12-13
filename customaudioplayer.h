@@ -145,6 +145,10 @@ private:
     QList<QAudioBuffer> m_pendingWrites;  // Raw buffers waiting to be written (processed on-demand for real-time EQ)
     QByteArray m_partialProcessedData;  // Partial processed buffer if we couldn't write it all
     QTimer *m_writeTimer;  // Timer to periodically write chunks without blocking
+    
+    // Cleanup synchronization
+    bool m_cleaningUp;  // Flag to prevent callbacks during cleanup
+    QMutex m_cleanupMutex;  // Mutex to protect cleanup operations
 };
 
 #endif // CUSTOMAUDIOPLAYER_H

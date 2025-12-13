@@ -39,11 +39,12 @@ CustomAudioPlayer::CustomAudioPlayer(QObject *parent)
     , m_processingActive(false)
     , m_writeTimer(nullptr)
     , m_audioVisualizer(nullptr)
+    , m_cleaningUp(false)
+    , m_metadataPlayer(nullptr)  // CRITICAL: Initialize to nullptr
 {
     // Load saved volume from settings
     QSettings settings;
     m_volume = settings.value("audio/volume", 1.0).toReal();
-    qDebug() << "[CustomAudioPlayer] Loaded saved volume:" << m_volume;
     
     m_positionTimer = new QTimer(this);
     m_positionTimer->setInterval(200); // Update position every 200ms to reduce UI lag
@@ -53,6 +54,13 @@ CustomAudioPlayer::CustomAudioPlayer(QObject *parent)
     m_errorCheckTimer->setInterval(100); // Check for errors every 100ms
     m_errorCheckTimer->setSingleShot(false);
     connect(m_errorCheckTimer, &QTimer::timeout, this, [this]() {
+        // Check cleanup flag before accessing decoder
+        {
+            QMutexLocker locker(&m_cleanupMutex);
+            if (m_cleaningUp) {
+                return;
+            }
+        }
         if (m_decoder && m_decoder->error() != QAudioDecoder::NoError) {
             onError();
         }
@@ -74,11 +82,15 @@ void CustomAudioPlayer::setSource(const QUrl &source)
 {
     // CRITICAL: Check if source is actually changing
     if (m_source == source) {
-        // Source is the same - don't do anything
         return;
     }
 
-    qDebug() << "[CustomAudioPlayer] setSource called:" << source.toString() << "(previous:" << m_source.toString() << ")";
+
+    // CRITICAL: Set cleanup flag to prevent callbacks from accessing deleted objects
+    {
+        QMutexLocker locker(&m_cleanupMutex);
+        m_cleaningUp = true;
+    }
 
     // CRITICAL: Fully stop and cleanup before changing source
     // This prevents audio device conflicts and dual playback
@@ -86,10 +98,26 @@ void CustomAudioPlayer::setSource(const QUrl &source)
         stop();
     }
     
-    // Stop metadata player before cleanup to prevent race conditions
+    // Stop and disconnect metadata player before cleanup to prevent race conditions
     if (m_metadataPlayer) {
-        m_metadataPlayer->disconnect(this);  // Disconnect signals first
-        m_metadataPlayer->stop();
+        // CRITICAL: Check if pointer is valid by checking if it's a valid QObject
+        // This prevents crashes from accessing invalid memory
+        QObject *obj = qobject_cast<QObject*>(m_metadataPlayer);
+        if (!obj) {
+            m_metadataPlayer = nullptr;
+        } else {
+            // Save pointer and clear member immediately to prevent re-entry
+            QMediaPlayer *metadataPlayer = m_metadataPlayer;
+            m_metadataPlayer = nullptr;  // Clear pointer first to prevent re-entry
+            
+            // Stop first - this is safer than disconnect
+            metadataPlayer->stop();
+            
+            // Disconnect from our side - disconnect all signals from metadataPlayer to this
+            QObject::disconnect(metadataPlayer, nullptr, this, nullptr);
+            
+            delete metadataPlayer;
+        }
     }
     
     cleanupAudioPipeline();  // Ensure audio sink is fully released
@@ -100,10 +128,17 @@ void CustomAudioPlayer::setSource(const QUrl &source)
     m_seekTargetPosition = 0;
     m_durationCalculated = false;  // Allow duration calculation for new source
     m_metaData.clear();  // Clear old metadata - will be loaded for new source
-    emit metaDataChanged();  // Notify that metadata changed
     
     m_source = source;
+    
+    // Clear cleanup flag before emitting signals
+    {
+        QMutexLocker locker(&m_cleanupMutex);
+        m_cleaningUp = false;
+    }
+    
     emit sourceChanged();
+    emit metaDataChanged();  // Notify that metadata changed
 
     if (source.isEmpty()) {
         m_seekable = false;
@@ -115,7 +150,6 @@ void CustomAudioPlayer::setSource(const QUrl &source)
     // CRITICAL: Reset EQ settings when loading a new song (don't auto-apply)
     if (m_processor) {
         m_processor->resetEQ();
-        qDebug() << "[CustomAudioPlayer] EQ settings reset for new song";
     }
 
     setupAudioPipeline();
@@ -146,7 +180,6 @@ void CustomAudioPlayer::setLoop(bool loop)
     
     m_loop = loop;
     emit loopChanged();
-    qDebug() << "[CustomAudioPlayer] Loop" << (loop ? "enabled" : "disabled");
 }
 
 void CustomAudioPlayer::setBandGain(int band, qreal gainDb)
@@ -156,7 +189,6 @@ void CustomAudioPlayer::setBandGain(int band, qreal gainDb)
         
         // CRITICAL: For real-time EQ, re-process raw buffers with new EQ settings
         // Raw buffers are stored and processed on-demand, so EQ changes apply immediately
-        qDebug() << "[CustomAudioPlayer] EQ band" << band << "changed to" << gainDb << "dB - will apply to next buffers in real-time";
     }
 }
 
@@ -175,7 +207,6 @@ void CustomAudioPlayer::setAllBandGains(const QVariantList &gains)
         
         // CRITICAL: For real-time EQ, re-process raw buffers with new EQ settings
         // Raw buffers are stored and processed on-demand, so EQ changes apply immediately
-        qDebug() << "[CustomAudioPlayer] All EQ bands changed - will apply to next buffers in real-time";
     }
 }
 
@@ -187,7 +218,6 @@ void CustomAudioPlayer::setEQEnabled(bool enabled)
         // Save EQ enabled state to settings
         QSettings settings;
         settings.setValue("audio/eqEnabled", enabled);
-        qDebug() << "[CustomAudioPlayer] EQ" << (enabled ? "enabled" : "disabled") << "- state saved";
     }
 }
 
@@ -208,10 +238,8 @@ void CustomAudioPlayer::play()
 
     // CRITICAL: Ensure decoder exists - if not, setup pipeline first
     if (!m_decoder) {
-        qDebug() << "[CustomAudioPlayer] play() called but no decoder - setting up pipeline";
         setupAudioPipeline();
         if (!m_decoder) {
-            qWarning() << "[CustomAudioPlayer] play() failed - could not create decoder";
             return;
         }
     }
@@ -304,8 +332,6 @@ void CustomAudioPlayer::stop()
     if (m_audioSink) {
         m_audioSink->stop();
         m_audioSink->suspend();  // Ensure it's fully stopped
-        // Give audio system time to release the device
-        QThread::msleep(50);  // Small delay to ensure device is released
     }
     m_audioDevice = nullptr;  // QAudioSink owns it
     m_positionTimer->stop();
@@ -327,8 +353,6 @@ void CustomAudioPlayer::seek(qint64 position)
     
     // Clamp position to valid range
     qint64 targetPosition = qBound(0LL, position, m_duration);
-    
-    qDebug() << "[CustomAudioPlayer] Seeking to" << targetPosition << "ms";
     
     // Update position immediately for UI responsiveness
     m_position = targetPosition;
@@ -391,6 +415,14 @@ void CustomAudioPlayer::seek(qint64 position)
 
 void CustomAudioPlayer::onBufferReady()
 {
+    // CRITICAL: Check if we're cleaning up - don't process buffers during cleanup
+    {
+        QMutexLocker locker(&m_cleanupMutex);
+        if (m_cleaningUp) {
+            return;
+        }
+    }
+    
     // Check if decoder/processor still exist (might be deleted during cleanup)
     if (!m_decoder || !m_processor) {
         return;
@@ -405,10 +437,6 @@ void CustomAudioPlayer::onBufferReady()
     if (!m_formatInitialized) {
         m_audioFormat = buffer.format();
         
-        // Validate and log the format
-        qDebug() << "[CustomAudioPlayer] Audio format from buffer: sample rate:" << m_audioFormat.sampleRate() 
-                 << "Hz, channels:" << m_audioFormat.channelCount() 
-                 << ", sample format:" << m_audioFormat.sampleFormat();
         
         // Normalize format to Int16 for consistent processing
         // Keep sample rate and channels from file, but force Int16 sample format
@@ -417,7 +445,6 @@ void CustomAudioPlayer::onBufferReady()
         // Check if format is supported by audio device
         QAudioDevice device = QMediaDevices::defaultAudioOutput();
         if (!device.isFormatSupported(m_audioFormat)) {
-            qWarning() << "[CustomAudioPlayer] Format not supported by audio device, trying preferred format";
             QAudioFormat preferredFormat = device.preferredFormat();
             // Try to keep the sample rate and channels from the file, but use Int16
             preferredFormat.setSampleRate(m_audioFormat.sampleRate());
@@ -432,15 +459,7 @@ void CustomAudioPlayer::onBufferReady()
                 if (!device.isFormatSupported(preferredFormat)) {
                     // Last resort: use device preferred as-is
                     preferredFormat = device.preferredFormat();
-                    qWarning() << "[CustomAudioPlayer] Int16 not supported, using device preferred format: sample rate:" 
-                               << preferredFormat.sampleRate() << "Hz (file was" << m_audioFormat.sampleRate() << "Hz)";
-                } else {
-                    qWarning() << "[CustomAudioPlayer] File sample rate not supported, using device preferred: sample rate:" 
-                               << preferredFormat.sampleRate() << "Hz (file was" << m_audioFormat.sampleRate() << "Hz)";
                 }
-            } else {
-                qDebug() << "[CustomAudioPlayer] Using adjusted format: sample rate:" << preferredFormat.sampleRate() 
-                         << "Hz, channels:" << preferredFormat.channelCount() << ", format: Int16";
             }
             m_audioFormat = preferredFormat;
         }
@@ -458,17 +477,11 @@ void CustomAudioPlayer::onBufferReady()
         m_audioSink = new QAudioSink(m_audioFormat, this);
         m_audioSink->setVolume(m_volume);
         
-        // Verify the actual format being used
-        QAudioFormat actualFormat = m_audioSink->format();
-        qDebug() << "[CustomAudioPlayer] Audio sink created with format: sample rate:" << actualFormat.sampleRate() 
-                 << "Hz, channels:" << actualFormat.channelCount() 
-                 << ", sample format:" << actualFormat.sampleFormat();
         
         // Start the audio sink - this returns a QIODevice we can write to
         m_audioDevice = m_audioSink->start();
         
         if (!m_audioDevice) {
-            qWarning() << "[CustomAudioPlayer] Failed to start audio sink";
             return;
         }
         
@@ -544,9 +557,6 @@ void CustomAudioPlayer::onBufferReady()
                             if (m_playbackState != PlayingState) {
                                 updatePlaybackState(PlayingState);
                             }
-                            qDebug() << "[CustomAudioPlayer] Seek complete, reached position:" << currentPosition << "ms, audio sink restarted";
-                        } else {
-                            qWarning() << "[CustomAudioPlayer] Failed to restart audio sink after seek - device:" << (m_audioDevice ? "exists but not open" : "null");
                         }
                     }
                     
@@ -567,7 +577,14 @@ void CustomAudioPlayer::onBufferReady()
 
 void CustomAudioPlayer::onFinished()
 {
-    qDebug() << "[CustomAudioPlayer] Decoder finished - all audio data decoded";
+    // CRITICAL: Check if we're cleaning up - don't process during cleanup
+    {
+        QMutexLocker locker(&m_cleanupMutex);
+        if (m_cleaningUp) {
+            return;
+        }
+    }
+    
     
     // Final duration update when decoder finishes (only if not already calculated)
     // Note: frameCount() already accounts for all channels, so we don't divide by channelCount
@@ -577,7 +594,6 @@ void CustomAudioPlayer::onFinished()
             m_duration = finalDuration;
             m_durationCalculated = true;  // Mark as calculated - preserve it from now on
             emit durationChanged();
-            qDebug() << "[CustomAudioPlayer] Final duration:" << m_duration << "ms from" << m_totalFrames << "frames";
         }
     }
     
@@ -588,7 +604,6 @@ void CustomAudioPlayer::onFinished()
     {
         QMutexLocker locker(&m_bufferMutex);
         if (!m_pendingBuffers.isEmpty()) {
-            qDebug() << "[CustomAudioPlayer] Decoder finished but" << m_pendingBuffers.size() << "buffers still pending processing";
             return;  // Still processing
         }
     }
@@ -597,26 +612,36 @@ void CustomAudioPlayer::onFinished()
     {
         QMutexLocker locker(&m_writeMutex);
         if (!m_pendingWrites.isEmpty()) {
-            qDebug() << "[CustomAudioPlayer] Decoder finished but" << m_pendingWrites.size() << "writes still pending";
             return;  // Still writing
         }
     }
-    
-    // All data decoded and queued - playback will continue until audio device buffer is empty
-    // Don't stop here - let updatePosition or the audio device handle end of playback
-    qDebug() << "[CustomAudioPlayer] All data decoded and queued, playback will continue";
 }
 
 void CustomAudioPlayer::onError()
 {
+    // CRITICAL: Check if we're cleaning up - don't process during cleanup
+    {
+        QMutexLocker locker(&m_cleanupMutex);
+        if (m_cleaningUp) {
+            return;
+        }
+    }
+    
     QString errorString = m_decoder ? m_decoder->errorString() : "Unknown error";
     int errorCode = m_decoder ? static_cast<int>(m_decoder->error()) : 0;
-    qWarning() << "[CustomAudioPlayer] Error:" << errorString;
     emit errorOccurred(errorCode, errorString);
 }
 
 void CustomAudioPlayer::onMetaDataChanged()
 {
+    // CRITICAL: Check if we're cleaning up - don't process during cleanup
+    {
+        QMutexLocker locker(&m_cleanupMutex);
+        if (m_cleaningUp) {
+            return;
+        }
+    }
+    
     if (!m_metadataPlayer) {
         return;
     }
@@ -625,7 +650,6 @@ void CustomAudioPlayer::onMetaDataChanged()
     // This prevents race conditions where metadata from old file overwrites new file
     QUrl currentSource = m_metadataPlayer->source();
     if (currentSource != m_source) {
-        qDebug() << "[CustomAudioPlayer] Ignoring metadata from old source:" << currentSource.toString() << "(current:" << m_source.toString() << ")";
         return;
     }
     
@@ -678,13 +702,11 @@ void CustomAudioPlayer::onMetaDataChanged()
     }
     
     emit metaDataChanged();
-    qDebug() << "[CustomAudioPlayer] Metadata extracted - Title:" << title << "Artist:" << artist;
 }
 
 void CustomAudioPlayer::setAudioVisualizer(QObject* visualizer)
 {
     m_audioVisualizer = visualizer;
-    qDebug() << "[CustomAudioPlayer] Audio visualizer set for direct sample feeding";
 }
 
 void CustomAudioPlayer::updatePosition()
@@ -722,7 +744,6 @@ void CustomAudioPlayer::updatePosition()
                 // Playback finished
                 if (m_loop) {
                     // Loop: restart from beginning
-                    qDebug() << "[CustomAudioPlayer] Playback finished - looping from beginning";
                     m_position = 0;
                     m_basePosition = 0;
                     m_bytesWritten = 0;
@@ -779,7 +800,6 @@ void CustomAudioPlayer::updatePosition()
                     }
                     m_playbackStartTime.invalidate();
                     updatePlaybackState(StoppedState);
-                    qDebug() << "[CustomAudioPlayer] Playback finished - reached end of track";
                 }
                 return;
             }
@@ -812,7 +832,6 @@ void CustomAudioPlayer::updatePosition()
                 if (allDataWritten) {
                     if (m_loop) {
                         // Loop: restart from beginning
-                        qDebug() << "[CustomAudioPlayer] Playback finished - looping from beginning (fallback)";
                         m_position = 0;
                         m_basePosition = 0;
                         m_bytesWritten = 0;
@@ -869,7 +888,6 @@ void CustomAudioPlayer::updatePosition()
                         }
                         m_playbackStartTime.invalidate();
                         updatePlaybackState(StoppedState);
-                        qDebug() << "[CustomAudioPlayer] Playback finished - reached end of track (fallback)";
                     }
                     return;
                 }
@@ -887,7 +905,6 @@ void CustomAudioPlayer::setupAudioPipeline()
 {
     // CRITICAL: Prevent duplicate setup - if decoder already exists, cleanup first
     if (m_decoder) {
-        qWarning() << "[CustomAudioPlayer] setupAudioPipeline called but decoder already exists - cleaning up first";
         cleanupAudioPipeline();
     }
 
@@ -898,12 +915,10 @@ void CustomAudioPlayer::setupAudioPipeline()
     if (m_source.isLocalFile()) {
         filePath = m_source.toLocalFile();
     } else {
-        qWarning() << "[CustomAudioPlayer] Only local files supported";
         return;
     }
 
     if (!QFileInfo::exists(filePath)) {
-        qWarning() << "[CustomAudioPlayer] File does not exist:" << filePath;
         return;
     }
 
@@ -928,7 +943,6 @@ void CustomAudioPlayer::setupAudioPipeline()
     // Create decoder - always create new one to avoid race conditions
     // (cleanupAudioPipeline() deletes the old one, so this should always be null here)
     if (m_decoder) {
-        qWarning() << "[CustomAudioPlayer] Decoder still exists in setupAudioPipeline - this should not happen!";
         cleanupAudioPipeline();
     }
     
@@ -945,15 +959,12 @@ void CustomAudioPlayer::setupAudioPipeline()
     // CRITICAL: Preserve processor across source changes to maintain EQ settings
     if (!m_processor) {
         m_processor = new CustomAudioProcessor(this);
-        qDebug() << "[CustomAudioPlayer] Created new processor";
         
         // Restore EQ enabled state from settings
         QSettings settings;
         bool eqEnabled = settings.value("audio/eqEnabled", false).toBool();
         m_processor->setEnabled(eqEnabled);
-        qDebug() << "[CustomAudioPlayer] EQ enabled state restored:" << eqEnabled;
     } else {
-        qDebug() << "[CustomAudioPlayer] Reusing existing processor (EQ settings preserved)";
         // Restore EQ enabled state from settings
         QSettings settings;
         bool eqEnabled = settings.value("audio/eqEnabled", false).toBool();
@@ -961,14 +972,23 @@ void CustomAudioPlayer::setupAudioPipeline()
     }
 
     m_formatInitialized = false;
-    
-    qDebug() << "[CustomAudioPlayer] Audio pipeline setup for:" << filePath;
 }
 
 void CustomAudioPlayer::cleanupAudioPipeline()
 {
-    // Stop processing thread first
+    // CRITICAL: Set cleanup flag to prevent callbacks
+    {
+        QMutexLocker locker(&m_cleanupMutex);
+        m_cleaningUp = true;
+    }
+    
+    // Stop processing thread first - must be done before deleting objects it might access
     stopProcessingThread();
+    
+    // Stop error check timer to prevent it from accessing deleted decoder
+    if (m_errorCheckTimer) {
+        m_errorCheckTimer->stop();
+    }
     
     // CRITICAL: Disconnect all signals first to prevent callbacks during cleanup
     if (m_decoder) {
@@ -1019,6 +1039,12 @@ void CustomAudioPlayer::cleanupAudioPipeline()
         m_pendingWrites.clear();
     }
     m_partialProcessedData.clear();
+    
+    // Clear cleanup flag
+    {
+        QMutexLocker locker(&m_cleanupMutex);
+        m_cleaningUp = false;
+    }
 }
 
 void CustomAudioPlayer::updatePlaybackState(PlaybackState state)
@@ -1065,7 +1091,10 @@ void CustomAudioPlayer::stopProcessingThread()
     m_bufferReady.wakeAll();  // Wake thread so it can exit
     
     m_processingThread->quit();
-    m_processingThread->wait(1000);  // Wait up to 1 second for thread to finish
+    if (!m_processingThread->wait(2000)) {  // Wait up to 2 seconds for thread to finish
+        m_processingThread->terminate();
+        m_processingThread->wait(1000);  // Wait for termination
+    }
     
     m_processingThread = nullptr;
 }
@@ -1101,6 +1130,14 @@ void CustomAudioPlayer::processBuffersInThread()
 
 void CustomAudioPlayer::processAndQueueBuffer(const QAudioBuffer &rawBuffer)
 {
+    // CRITICAL: Check if we're cleaning up - don't process during cleanup
+    {
+        QMutexLocker locker(&m_cleanupMutex);
+        if (m_cleaningUp) {
+            return;
+        }
+    }
+    
     if (!rawBuffer.isValid()) {
         return;
     }
@@ -1126,6 +1163,17 @@ void CustomAudioPlayer::processAndQueueBuffer(const QAudioBuffer &rawBuffer)
 
 void CustomAudioPlayer::writeChunkToDevice()
 {
+    // CRITICAL: Check if we're cleaning up - don't write during cleanup
+    {
+        QMutexLocker locker(&m_cleanupMutex);
+        if (m_cleaningUp) {
+            if (m_writeTimer) {
+                m_writeTimer->stop();
+            }
+            return;
+        }
+    }
+    
     // This runs on the main thread via timer - write small chunks at proper rate
     if (!m_audioDevice || !m_audioDevice->isOpen() || !m_processor || !m_audioSink) {
         if (m_writeTimer) {
@@ -1172,7 +1220,6 @@ void CustomAudioPlayer::writeChunkToDevice()
         }
         
         if (written < 0) {
-            qWarning() << "[CustomAudioPlayer] Error writing audio data";
             m_partialProcessedData.clear();
             return;
         }
@@ -1252,7 +1299,6 @@ void CustomAudioPlayer::writeChunkToDevice()
         
         if (written < 0) {
             // Error writing - put buffer back
-            qWarning() << "[CustomAudioPlayer] Error writing audio data";
             QMutexLocker locker(&m_writeMutex);
             m_pendingWrites.prepend(rawBuffer);
             return;
