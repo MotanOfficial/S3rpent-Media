@@ -78,8 +78,8 @@ ShaderEffect {
     property real u_distortion: distortion
     
     // Reference the compiled shader files - Qt will find the .qsb files automatically
-    vertexShader: Qt.resolvedUrl("qrc:/ambientgradient.vert.qsb")
-    fragmentShader: Qt.resolvedUrl("qrc:/ambientgradient.frag.qsb")
+    vertexShader: Qt.resolvedUrl("qrc:/resources/shaders/ambientgradient.vert.qsb")
+    fragmentShader: Qt.resolvedUrl("qrc:/resources/shaders/ambientgradient.frag.qsb")
     
     // Opacity control - ShaderEffect uses qt_Opacity uniform automatically
     opacity: enabled ? effectOpacity : 0.0

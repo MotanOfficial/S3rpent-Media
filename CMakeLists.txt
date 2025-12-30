@@ -25,117 +25,118 @@ FetchContent_MakeAvailable(qlementine-icons)
 qt_standard_project_setup(REQUIRES 6.8)
 
 qt_add_executable(apps3rp3nt_media
-    main.cpp
-    colorutils.cpp
-    colorutils.h
-    windowmanager.cpp
-    windowmanager.h
-    wmfvideoplayer.cpp
-    wmfvideoplayer.h
-    wmfvideoplayer_playback.cpp
-    wmfvideoplayer_helpers.cpp
-    wmfvideoplayer_helpers.h
-    lrclibclient.cpp
-    lrclibclient.h
-    lyricstranslationclient.cpp
-    lyricstranslationclient.h
-    audiovisualizer.cpp
-    audiovisualizer.h
-    audioequalizer.cpp
-    audioequalizer.h
-    customaudioprocessor.cpp
-    customaudioprocessor.h
-    customaudioplayer.cpp
-    customaudioplayer.h
-    windowsmediasession.cpp
-    windowsmediasession.h
-    $<$<PLATFORM_ID:Windows>:windowsmediasession_windows.cpp>
-    discordrpc.cpp
-    discordrpc.h
-    coverartclient.cpp
-    coverartclient.h
-    lastfmclient.cpp
-    lastfmclient.h
-    singleinstancemanager.cpp
-    singleinstancemanager.h
-    windowframehelper.cpp
-    windowframehelper.h
-    $<$<PLATFORM_ID:Windows>:app.rc>
+    src/cpp/main.cpp
+    src/cpp/colorutils.cpp
+    src/cpp/colorutils.h
+    src/cpp/windowmanager.cpp
+    src/cpp/windowmanager.h
+    src/cpp/wmfvideoplayer.cpp
+    src/cpp/wmfvideoplayer.h
+    src/cpp/wmfvideoplayer_playback.cpp
+    src/cpp/wmfvideoplayer_helpers.cpp
+    src/cpp/wmfvideoplayer_helpers.h
+    src/cpp/lrclibclient.cpp
+    src/cpp/lrclibclient.h
+    src/cpp/lyricstranslationclient.cpp
+    src/cpp/lyricstranslationclient.h
+    src/cpp/audiovisualizer.cpp
+    src/cpp/audiovisualizer.h
+    src/cpp/audioequalizer.cpp
+    src/cpp/audioequalizer.h
+    src/cpp/customaudioprocessor.cpp
+    src/cpp/customaudioprocessor.h
+    src/cpp/customaudioplayer.cpp
+    src/cpp/customaudioplayer.h
+    src/cpp/windowsmediasession.cpp
+    src/cpp/windowsmediasession.h
+    $<$<PLATFORM_ID:Windows>:src/cpp/windowsmediasession_windows.cpp>
+    src/cpp/discordrpc.cpp
+    src/cpp/discordrpc.h
+    src/cpp/coverartclient.cpp
+    src/cpp/coverartclient.h
+    src/cpp/lastfmclient.cpp
+    src/cpp/lastfmclient.h
+    src/cpp/singleinstancemanager.cpp
+    src/cpp/singleinstancemanager.h
+    src/cpp/windowframehelper.cpp
+    src/cpp/windowframehelper.h
+    $<$<PLATFORM_ID:Windows>:resources/app.rc>
 )
 
 set(QML_FILES
-        Main.qml
-        ImageViewer.qml
-        VideoPlayer.qml
-        AudioPlayer.qml
-        TitleBar.qml
-        MetadataPopup.qml
-        SettingsPage.qml
-        WindowBackground.qml
-        GradientBackground.qml
-        BackdropBlur.qml
-        AmbientGradient.qml
-        SnowEffect.qml
-        ColorExtractor.qml
-        MediaViewer.qml
-        AudioControls.qml
-        ImageControls.qml
-        ImageThumbnailPopup.qml
-        MarkdownViewer.qml
-        AudioVisualizerView.qml
-        BassPulseWindow.qml
-        BassPulseManager.qml
-        DebugConsole.qml
-    TextViewer.qml
-    PdfViewer.qml
-        EmptyState.qml
-        ToastNotification.qml
-        InputHandlers.qml
-        AppShortcuts.qml
-        ImageNavigationArrows.qml
-        OpenFileDialog.qml
-        FileDialogManager.qml
-        MetadataPopupManager.qml
-        WindowInitializationManager.qml
-        WindowResizeTimers.qml
-        MediaViewerLoaders.qml
-        MainContentArea.qml
-        BadAppleEffect.qml
-        FileTypeUtils.js
-        MediaFormatUtils.js
-        ImageNavigationUtils.js
-        AudioUtils.js
-        DebugUtils.js
-        ViewManagementUtils.js
-        MediaLoaderUtils.js
-        ColorManagementUtils.js
-        MediaUnloadUtils.js
-        WindowLifecycleUtils.js
-        WindowResizeUtils.js
-        MediaChangeHandlerUtils.js
-        MediaLoaderFunctions.js
-        AudioProcessingFunctions.js
-        WindowResizeFunctions.js
+        src/qml/Main.qml
+        src/qml/ImageViewer.qml
+        src/qml/VideoPlayer.qml
+        src/qml/AudioPlayer.qml
+        src/qml/TitleBar.qml
+        src/qml/MetadataPopup.qml
+        src/qml/SettingsPage.qml
+        src/qml/WindowBackground.qml
+        src/qml/GradientBackground.qml
+        src/qml/BackdropBlur.qml
+        src/qml/AmbientGradient.qml
+        src/qml/SnowEffect.qml
+        src/qml/ColorExtractor.qml
+        src/qml/MediaViewer.qml
+        src/qml/AudioControls.qml
+        src/qml/ImageControls.qml
+        src/qml/ImageThumbnailPopup.qml
+        src/qml/MarkdownViewer.qml
+        src/qml/AudioVisualizerView.qml
+        src/qml/BassPulseWindow.qml
+        src/qml/BassPulseManager.qml
+        src/qml/DebugConsole.qml
+        src/qml/TextViewer.qml
+        src/qml/PdfViewer.qml
+        src/qml/EmptyState.qml
+        src/qml/ToastNotification.qml
+        src/qml/InputHandlers.qml
+        src/qml/AppShortcuts.qml
+        src/qml/ImageNavigationArrows.qml
+        src/qml/OpenFileDialog.qml
+        src/qml/FileDialogManager.qml
+        src/qml/MetadataPopupManager.qml
+        src/qml/WindowInitializationManager.qml
+        src/qml/WindowResizeTimers.qml
+        src/qml/MediaViewerLoaders.qml
+        src/qml/MainContentArea.qml
+        src/qml/BadAppleEffect.qml
+        src/js/FileTypeUtils.js
+        src/js/MediaFormatUtils.js
+        src/js/ImageNavigationUtils.js
+        src/js/AudioUtils.js
+        src/js/DebugUtils.js
+        src/js/ViewManagementUtils.js
+        src/js/MediaLoaderUtils.js
+        src/js/ColorManagementUtils.js
+        src/js/MediaUnloadUtils.js
+        src/js/WindowLifecycleUtils.js
+        src/js/WindowResizeUtils.js
+        src/js/MediaChangeHandlerUtils.js
+        src/js/MediaLoaderFunctions.js
+        src/js/AudioProcessingFunctions.js
+        src/js/WindowResizeFunctions.js
 )
 
 # Add PDF implementation only if PDF module is available
 if(TARGET Qt6::Pdf AND TARGET Qt6::PdfQuick)
-    list(APPEND QML_FILES PdfViewerImpl.qml)
+    list(APPEND QML_FILES src/qml/PdfViewerImpl.qml)
 endif()
 
 qt_add_qml_module(apps3rp3nt_media
     URI s3rp3nt_media
     QML_FILES ${QML_FILES}
+    PREFIX src
 )
 
 # Add shader files using qt_add_shaders - shaders are automatically added to resources
 qt_add_shaders(apps3rp3nt_media PRIVATE
     FILES
-        ambientgradient.vert
-        ambientgradient.frag
-        snow.frag
-        badapple.frag
-        badapple_procedural.frag
+        resources/shaders/ambientgradient.vert
+        resources/shaders/ambientgradient.frag
+        resources/shaders/snow.frag
+        resources/shaders/badapple.frag
+        resources/shaders/badapple_procedural.frag
     OUTPUT_TARGETS shader_targets
 )
 
@@ -234,11 +235,11 @@ install(TARGETS apps3rp3nt_media
 
 # Copy Bad Apple files to build directory (for development)
 # These files will be in the same directory as the executable
-if(EXISTS "${CMAKE_SOURCE_DIR}/Bad Apple!!.mp3")
+if(EXISTS "${CMAKE_SOURCE_DIR}/resources/media/Bad Apple!!.mp3")
     add_custom_command(TARGET apps3rp3nt_media POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/Bad Apple!!.mp3"
-            "${CMAKE_BINARY_DIR}/Bad Apple!!.mp3"
+            "${CMAKE_SOURCE_DIR}/resources/media/Bad Apple!!.mp3"
+            "$<TARGET_FILE_DIR:apps3rp3nt_media>/Bad Apple!!.mp3"
         COMMENT "Copying Bad Apple!!.mp3 to build directory"
     )
     message(STATUS "Bad Apple!!.mp3 will be copied to build directory")
@@ -246,11 +247,11 @@ else()
     message(WARNING "Bad Apple!!.mp3 not found - easter egg will not work")
 endif()
 
-if(EXISTS "${CMAKE_SOURCE_DIR}/badapple_frames.bin")
+if(EXISTS "${CMAKE_SOURCE_DIR}/resources/media/badapple_frames.bin")
     add_custom_command(TARGET apps3rp3nt_media POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/badapple_frames.bin"
-            "${CMAKE_BINARY_DIR}/badapple_frames.bin"
+            "${CMAKE_SOURCE_DIR}/resources/media/badapple_frames.bin"
+            "$<TARGET_FILE_DIR:apps3rp3nt_media>/badapple_frames.bin"
         COMMENT "Copying badapple_frames.bin to build directory"
     )
     message(STATUS "badapple_frames.bin will be copied to build directory")
@@ -259,23 +260,23 @@ else()
 endif()
 
 # Copy icon files to build directory (for tray icon loading from file system)
-if(EXISTS "${CMAKE_SOURCE_DIR}/icon.ico")
+if(EXISTS "${CMAKE_SOURCE_DIR}/resources/icons/icon.ico")
     add_custom_command(TARGET apps3rp3nt_media POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/icon.ico"
-            "${CMAKE_BINARY_DIR}/icon.ico"
+            "${CMAKE_SOURCE_DIR}/resources/icons/icon.ico"
+            "$<TARGET_FILE_DIR:apps3rp3nt_media>/icon.ico"
         COMMENT "Copying icon.ico to build directory"
     )
 endif()
-if(EXISTS "${CMAKE_SOURCE_DIR}/icon.png")
+if(EXISTS "${CMAKE_SOURCE_DIR}/resources/icons/icon.png")
     add_custom_command(TARGET apps3rp3nt_media POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/icon.png"
-            "${CMAKE_BINARY_DIR}/icon.png"
+            "${CMAKE_SOURCE_DIR}/resources/icons/icon.png"
+            "$<TARGET_FILE_DIR:apps3rp3nt_media>/icon.png"
         COMMENT "Copying icon.png to build directory"
     )
 endif()
 
 # Install Bad Apple files for distribution
-install(FILES "${CMAKE_SOURCE_DIR}/Bad Apple!!.mp3" DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
-install(FILES "${CMAKE_SOURCE_DIR}/badapple_frames.bin" DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
+install(FILES "${CMAKE_SOURCE_DIR}/resources/media/Bad Apple!!.mp3" DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
+install(FILES "${CMAKE_SOURCE_DIR}/resources/media/badapple_frames.bin" DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)

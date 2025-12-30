@@ -36,6 +36,7 @@ Makefile*
 target_wrapper.*
 
 # QtCreator
+.qtcreator/
 *.autosave
 
 # QtCreator Qml

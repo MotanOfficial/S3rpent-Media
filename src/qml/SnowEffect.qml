@@ -33,7 +33,7 @@ Item {
         property vector2d u_resolution: Qt.vector2d(width, height)
         property color u_color: snowEffect.snowColor
         
-        fragmentShader: Qt.resolvedUrl("qrc:/snow.frag.qsb")
+        fragmentShader: Qt.resolvedUrl("qrc:/resources/shaders/snow.frag.qsb")
     }
     
     // Drive time (cheap, stable, infinite loop)

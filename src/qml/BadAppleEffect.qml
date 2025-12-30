@@ -85,7 +85,7 @@ Item {
         property var u_frameTexture: (badAppleEffect.framesLoaded && frameTextureImage.status === Image.Ready) ? frameTextureSource : null
         property bool u_useFrameTexture: badAppleEffect.framesLoaded && frameTextureImage.status === Image.Ready
         
-        fragmentShader: Qt.resolvedUrl("qrc:/badapple.frag.qsb")
+        fragmentShader: Qt.resolvedUrl("qrc:/resources/shaders/badapple.frag.qsb")
     }
     
     // Dedicated MediaPlayer for Bad Apple audio

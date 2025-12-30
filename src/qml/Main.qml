@@ -5,21 +5,21 @@ import QtQuick.Dialogs
 import QtQuick.Layouts
 import Qt5Compat.GraphicalEffects
 import QtCore
-import "FileTypeUtils.js" as FileTypeUtils
-import "MediaFormatUtils.js" as MediaFormatUtils
-import "ImageNavigationUtils.js" as ImageNavigationUtils
-import "AudioUtils.js" as AudioUtils
-import "DebugUtils.js" as DebugUtils
-import "ViewManagementUtils.js" as ViewManagementUtils
-import "MediaLoaderUtils.js" as MediaLoaderUtils
-import "ColorManagementUtils.js" as ColorManagementUtils
-import "MediaUnloadUtils.js" as MediaUnloadUtils
-import "WindowLifecycleUtils.js" as WindowLifecycleUtils
-import "WindowResizeUtils.js" as WindowResizeUtils
-import "MediaChangeHandlerUtils.js" as MediaChangeHandlerUtils
-import "MediaLoaderFunctions.js" as MediaLoaderFunctions
-import "AudioProcessingFunctions.js" as AudioProcessingFunctions
-import "WindowResizeFunctions.js" as WindowResizeFunctions
+import "../js/FileTypeUtils.js" as FileTypeUtils
+import "../js/MediaFormatUtils.js" as MediaFormatUtils
+import "../js/ImageNavigationUtils.js" as ImageNavigationUtils
+import "../js/AudioUtils.js" as AudioUtils
+import "../js/DebugUtils.js" as DebugUtils
+import "../js/ViewManagementUtils.js" as ViewManagementUtils
+import "../js/MediaLoaderUtils.js" as MediaLoaderUtils
+import "../js/ColorManagementUtils.js" as ColorManagementUtils
+import "../js/MediaUnloadUtils.js" as MediaUnloadUtils
+import "../js/WindowLifecycleUtils.js" as WindowLifecycleUtils
+import "../js/WindowResizeUtils.js" as WindowResizeUtils
+import "../js/MediaChangeHandlerUtils.js" as MediaChangeHandlerUtils
+import "../js/MediaLoaderFunctions.js" as MediaLoaderFunctions
+import "../js/AudioProcessingFunctions.js" as AudioProcessingFunctions
+import "../js/WindowResizeFunctions.js" as WindowResizeFunctions
 
 ApplicationWindow {
     id: window
