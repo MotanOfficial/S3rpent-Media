@@ -46,6 +46,7 @@ WMFVideoPlayer::WMFVideoPlayer(QObject *parent)
     , m_ffmpegProcess(nullptr)
     , m_needsSpecialHandling(false)
     , m_lastSyncTime(0)
+    , m_hasAudio(true)  // Default to true, will be updated during detection
 {
     // Load saved volume from settings
     QSettings settings;
@@ -280,6 +281,25 @@ void WMFVideoPlayer::updatePosition()
         
         // No dynamic sync - playback rate is set once at start
         
+        // Check if we've reached the end
+        if (m_duration > 0 && audioPosition >= m_duration) {
+            // Clamp position to duration
+            audioPosition = m_duration;
+            
+            // Check if all audio has been written (for special handling videos)
+            bool allAudioWritten = false;
+            if (m_needsSpecialHandling && m_audioDecoded && !m_decodedAudioData.isEmpty()) {
+                allAudioWritten = (m_audioBytesWritten >= m_decodedAudioData.size());
+            }
+            
+            // If we're at the end and all audio is written, stop playback
+            if (allAudioWritten || !m_needsSpecialHandling) {
+                qDebug() << "[MediaPlayer] Reached end of playback (position:" << audioPosition << "ms, duration:" << m_duration << "ms), stopping";
+                stop();
+                return;
+            }
+        }
+        
         // Update position from audio
         if (audioPosition != m_position) {
             m_position = audioPosition;
@@ -417,6 +437,8 @@ void WMFVideoPlayer::detectSpecialHandling()
         qDebug() << "[MediaPlayer] No audio data decoded, using normal handling";
         m_needsSpecialHandling = false;
         m_duration = m_containerDuration;
+        m_hasAudio = false;
+        emit hasAudioChanged();
         emit durationChanged();
         return;
     }
@@ -456,6 +478,8 @@ void WMFVideoPlayer::detectSpecialHandling()
         m_decodedAudioData = fullAudioData;
         m_duration = actualDurationMs;
         m_audioDecoded = true;
+        m_hasAudio = true;
+        emit hasAudioChanged();
         qDebug() << "[MediaPlayer] Stored decoded audio data:" << m_decodedAudioData.size() << "bytes, audioDecoded:" << m_audioDecoded;
         
         // Setup audio output for FFmpeg audio (but preserve audioDecoded flag and decoded data)
@@ -485,6 +509,8 @@ void WMFVideoPlayer::detectSpecialHandling()
     } else {
         m_needsSpecialHandling = false;
         m_duration = m_containerDuration;
+        m_hasAudio = true;  // Audio was successfully decoded, so video has audio
+        emit hasAudioChanged();
         qDebug() << "[MediaPlayer] Normal video detected (container:" << m_containerDuration << "ms, actual:" << actualDurationMs << "ms) - using QMediaPlayer audio";
         
         // Ensure QMediaPlayer audio is enabled with correct volume
@@ -823,29 +849,11 @@ void WMFVideoPlayer::setupAudioOutput(int channels)
     m_audioSink = new QAudioSink(device, format, this);
     m_audioSink->setVolume(m_volume);
     
-    // CRITICAL: Only start the device if we're not already playing
-    // If we're already playing, the device should already be started from play()
-    if (m_playbackState != 1) {
-        m_audioDevice = m_audioSink->start();
-        
-        if (!m_audioDevice) {
-            qDebug() << "[FFmpeg] Failed to start audio sink";
-            delete m_audioSink;
-            m_audioSink = nullptr;
-            return;
-        }
-        
-        // Ensure device is open and ready
-        if (!m_audioDevice->isOpen()) {
-            qWarning() << "[FFmpeg] Audio device is not open after start()";
-        } else {
-            qDebug() << "[FFmpeg] Audio device is open and ready for FFmpeg audio";
-        }
-    } else {
-        // Already playing - device should already be started, don't start it again
-        qDebug() << "[FFmpeg] Audio sink setup called while playing - device should already be started";
-        // Just update volume, don't restart device
-    }
+    // CRITICAL: Do NOT start the device here - it will be started in play()
+    // Starting it here causes "AUDCLNT_E_NOT_STOPPED" errors when play() tries to start it again
+    // The device should only be started when playback actually begins
+    m_audioDevice = nullptr;
+    qDebug() << "[FFmpeg] Audio sink created and ready (device will be started in play())";
     
     m_audioBuffer.clear();
     qDebug() << "[FFmpeg] Audio output setup -" << format.sampleRate() << "Hz," << format.channelCount() << "channels";

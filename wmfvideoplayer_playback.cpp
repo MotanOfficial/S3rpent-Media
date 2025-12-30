@@ -32,6 +32,54 @@ void WMFVideoPlayer::play()
         return;
     }
     
+    // Check if we're at the end and need to restart from beginning
+    bool atEnd = false;
+    if (m_duration > 0 && m_position >= m_duration) {
+        atEnd = true;
+    } else if (m_needsSpecialHandling && m_audioDecoded && !m_decodedAudioData.isEmpty()) {
+        // Also check if all audio has been written (for special handling videos)
+        if (m_audioBytesWritten >= m_decodedAudioData.size()) {
+            atEnd = true;
+        }
+    }
+    
+    // If at the end, reset everything before restarting
+    if (atEnd) {
+        qDebug() << "[MediaPlayer] Video at end, resetting for restart";
+        
+        // CRITICAL: For special handling videos, MUST stop and close audio device FIRST
+        // before resetting anything, otherwise the device stays in a bad state
+        if (m_needsSpecialHandling && m_audioSink) {
+            // Stop the feed timer first
+            if (m_audioFeedTimer) {
+                m_audioFeedTimer->stop();
+            }
+            
+            // Stop and close the audio device to allow restart
+            if (m_audioDevice) {
+                m_audioSink->stop();
+                m_audioSink->suspend();
+                m_audioDevice->close();
+                m_audioDevice = nullptr;
+                qDebug() << "[FFmpeg Audio] Stopped and closed audio device for restart";
+            }
+            
+            // Wait briefly for device to be fully released
+            QThread::msleep(100);
+        }
+        
+        // Now reset position and audio state
+        m_position = 0;
+        m_audioBytesWritten = 0;
+        
+        // Reset video position
+        if (m_mediaPlayer) {
+            m_mediaPlayer->setPosition(0);
+        }
+        
+        emit positionChanged();
+    }
+    
     // If detection is still running, wait a bit (but don't block forever)
     // This is a simple check - in practice detection should complete quickly
     if (m_containerDuration > 0 && m_duration == 0) {
@@ -41,6 +89,13 @@ void WMFVideoPlayer::play()
     
     // Start Qt MediaPlayer video
     if (m_mediaPlayer) {
+        // Restore playback rate for special handling videos
+        if (m_needsSpecialHandling && m_containerDuration > 0 && m_duration > 0 && m_containerDuration != m_duration) {
+            double fullRatio = (double)m_containerDuration / (double)m_duration;
+            double adjustedRate = sqrt(fullRatio);
+            m_mediaPlayer->setPlaybackRate(adjustedRate);
+            qDebug() << "[MediaPlayer] Restored video playback rate to" << adjustedRate << "x for restart";
+        }
         m_mediaPlayer->play();
     }
     
@@ -48,14 +103,30 @@ void WMFVideoPlayer::play()
     qDebug() << "[MediaPlayer] Checking FFmpeg audio - needsSpecialHandling:" << m_needsSpecialHandling << ", audioDecoded:" << m_audioDecoded << ", audioSink:" << (m_audioSink != nullptr);
     if (m_needsSpecialHandling && m_audioDecoded && m_audioSink) {
         qDebug() << "[MediaPlayer] Starting FFmpeg audio playback";
-        // Only reset audio position if starting fresh (not resuming from pause)
-        if (m_playbackState == 0) {
+        
+        // Reset audio position if starting fresh (stopped) or restarting from end
+        if (m_playbackState == 0 || atEnd) {
             m_audioBytesWritten = 0;
         }
         
         // CRITICAL: QAudioSink::start() can only be called once per sink instance
         // If the device is already started, we must NOT call start() again
         // Instead, we just resume the sink if it's suspended
+        
+        // If we're restarting from the end, the device should already be closed
+        // But check anyway to be safe
+        if (atEnd && m_audioDevice) {
+            // Device should have been closed in the atEnd block above
+            // But if it's still open, close it now
+            if (m_audioDevice->isOpen()) {
+                qWarning() << "[FFmpeg Audio] Device still open after atEnd reset, closing now";
+                m_audioSink->stop();
+                m_audioSink->suspend();
+                m_audioDevice->close();
+                m_audioDevice = nullptr;
+                QThread::msleep(100); // Wait for device to be fully released
+            }
+        }
         
         // Check if device exists and is open
         if (!m_audioDevice || !m_audioDevice->isOpen()) {
@@ -75,7 +146,7 @@ void WMFVideoPlayer::play()
                 m_audioDevice->close();
                 m_audioDevice = nullptr;
                 // Wait briefly for device to be released
-                QThread::msleep(50);
+                QThread::msleep(100);
                 m_audioDevice = m_audioSink->start();
                 if (!m_audioDevice || !m_audioDevice->isOpen()) {
                     qWarning() << "[FFmpeg Audio] Failed to restart audio device on play()";
@@ -83,9 +154,25 @@ void WMFVideoPlayer::play()
                 }
             }
         } else {
+            // Device is already open and running - this should only happen when resuming from pause
+            // If we're restarting from end, this is an error
+            if (atEnd) {
+                qWarning() << "[FFmpeg Audio] Device still open when restarting from end - forcing close";
+                m_audioSink->stop();
+                m_audioSink->suspend();
+                m_audioDevice->close();
+                m_audioDevice = nullptr;
+                QThread::msleep(100);
+                m_audioDevice = m_audioSink->start();
+                if (!m_audioDevice || !m_audioDevice->isOpen()) {
+                    qWarning() << "[FFmpeg Audio] Failed to restart audio device after forced close";
+                    return;
+            }
+        } else {
             // Device is already open and running - just resume if needed
             // DO NOT call start() again - this causes "AUDCLNT_E_NOT_STOPPED" errors
-            qDebug() << "[FFmpeg Audio] Audio device already open and running";
+                qDebug() << "[FFmpeg Audio] Audio device already open and running (resuming from pause)";
+            }
         }
         
         // Ensure sink is active (resume if paused, or if it was just set up)

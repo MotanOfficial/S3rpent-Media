@@ -6,6 +6,18 @@
 #include <QFileInfo>
 #include <QMenu>
 #include <QStyle>
+#include <QPixmap>
+#include <QImage>
+#include <QCoreApplication>
+#include <QFile>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <QGuiApplication>
+// Define icon resource ID (matches app.rc)
+#ifndef IDI_ICON1
+#define IDI_ICON1 1
+#endif
+#endif
 
 SingleInstanceManager::SingleInstanceManager(QObject *parent)
     : QObject(parent)
@@ -146,16 +158,93 @@ void SingleInstanceManager::setupSystemTray()
     
     m_trayIcon = new QSystemTrayIcon(this);
     
-    // Try to use app icon, fallback to default
-    QIcon icon = QApplication::windowIcon();
-    if (icon.isNull()) {
+    // Try to load icon - prioritize Windows executable resources (app.rc) first
+    QIcon icon;
+    #ifdef Q_OS_WIN
+    // Try loading from executable file path (Qt can extract icon from .exe)
+    QString exePath = QCoreApplication::applicationFilePath();
+    if (QFile::exists(exePath)) {
+        icon = QIcon(exePath);
+        if (!icon.isNull() && !icon.availableSizes().isEmpty()) {
+            qDebug() << "System tray icon loaded from executable file:" << exePath;
+        }
+    }
+    
+    // If that failed, try Windows API to load from resources
+    if (icon.isNull() || icon.availableSizes().isEmpty()) {
+        HICON hIconSmall = (HICON)LoadImage(GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_ICON1), IMAGE_ICON, 16, 16, 0);
+        HICON hIconLarge = (HICON)LoadImage(GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_ICON1), IMAGE_ICON, 32, 32, 0);
+        
+        if (hIconSmall || hIconLarge) {
+            icon = QIcon();
+            if (hIconSmall) {
+                QPixmap pixmap = QPixmap::fromImage(QImage::fromHICON(hIconSmall));
+                if (!pixmap.isNull()) {
+                    icon.addPixmap(pixmap);
+                }
+                DestroyIcon(hIconSmall);
+            }
+            if (hIconLarge) {
+                QPixmap pixmap = QPixmap::fromImage(QImage::fromHICON(hIconLarge));
+                if (!pixmap.isNull()) {
+                    icon.addPixmap(pixmap);
+                }
+                DestroyIcon(hIconLarge);
+            }
+            if (!icon.isNull() && !icon.availableSizes().isEmpty()) {
+                qDebug() << "System tray icon loaded from Windows executable resources";
+            }
+        }
+    }
+    #endif
+    
+    // Fallback to app window icon (if it was set)
+    if (icon.isNull() || icon.availableSizes().isEmpty()) {
+        icon = QApplication::windowIcon();
+        if (!icon.isNull() && !icon.availableSizes().isEmpty()) {
+            qDebug() << "System tray icon loaded from application window icon";
+        }
+    }
+    
+    // Fallback: try loading from application directory
+    if (icon.isNull() || icon.availableSizes().isEmpty()) {
+        QString appDir = QCoreApplication::applicationDirPath();
+        QString iconPath = appDir + "/icon.ico";
+        if (QFile::exists(iconPath)) {
+            icon = QIcon(iconPath);
+            if (!icon.isNull() && !icon.availableSizes().isEmpty()) {
+                qDebug() << "System tray icon loaded from application directory:" << iconPath;
+            }
+        }
+        if (icon.isNull() || icon.availableSizes().isEmpty()) {
+            iconPath = appDir + "/icon.png";
+            if (QFile::exists(iconPath)) {
+                icon = QIcon(iconPath);
+                if (!icon.isNull() && !icon.availableSizes().isEmpty()) {
+                    qDebug() << "System tray icon loaded from application directory:" << iconPath;
+                }
+            }
+        }
+    }
+    
+    // Fallback to Qt resources if all else failed
+    if (icon.isNull() || icon.availableSizes().isEmpty()) {
         icon = QIcon(":/icon.png");
+        if (!icon.isNull() && !icon.availableSizes().isEmpty()) {
+            qDebug() << "System tray icon loaded from Qt resources (icon.png)";
+        }
     }
-    if (icon.isNull()) {
+    if (icon.isNull() || icon.availableSizes().isEmpty()) {
         icon = QIcon(":/icon.ico");
+        if (!icon.isNull() && !icon.availableSizes().isEmpty()) {
+            qDebug() << "System tray icon loaded from Qt resources (icon.ico)";
+        }
     }
-    if (icon.isNull()) {
+    
+    // Last resort: use default system icon
+    if (icon.isNull() || icon.availableSizes().isEmpty()) {
         icon = QApplication::style()->standardIcon(QStyle::SP_ComputerIcon);
+        qWarning() << "System tray icon using default system icon";
     }
     m_trayIcon->setIcon(icon);
     m_trayIcon->setToolTip("s3rp3nt media");
@@ -183,6 +272,108 @@ void SingleInstanceManager::setupSystemTray()
         qWarning() << "System tray icon is not visible";
     } else {
         qDebug() << "System tray icon shown successfully";
+    }
+}
+
+void SingleInstanceManager::updateTrayIcon()
+{
+    if (!m_trayIcon) {
+        return;
+    }
+    
+    // Try to get the app icon (should be set by initIcons now)
+    QIcon icon = QApplication::windowIcon();
+    if (!icon.isNull() && !icon.availableSizes().isEmpty()) {
+        m_trayIcon->setIcon(icon);
+        qDebug() << "System tray icon updated with application icon";
+        return;
+    }
+    
+    // If window icon is null or empty, try to load it ourselves
+    if (icon.isNull() || icon.availableSizes().isEmpty()) {
+        qDebug() << "Application window icon is null or empty, trying to load from resources";
+    }
+    
+    // Fallback: try loading from executable file path (Qt can extract icon from .exe)
+    if (icon.isNull() || icon.availableSizes().isEmpty()) {
+        #ifdef Q_OS_WIN
+        QString exePath = QCoreApplication::applicationFilePath();
+        if (QFile::exists(exePath)) {
+            icon = QIcon(exePath);
+            if (!icon.isNull() && !icon.availableSizes().isEmpty()) {
+                qDebug() << "System tray icon updated from executable file:" << exePath;
+            }
+        }
+        
+        // If that failed, try Windows API to load from resources
+        if (icon.isNull() || icon.availableSizes().isEmpty()) {
+            HICON hIconSmall = (HICON)LoadImage(GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_ICON1), IMAGE_ICON, 16, 16, 0);
+            HICON hIconLarge = (HICON)LoadImage(GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_ICON1), IMAGE_ICON, 32, 32, 0);
+            
+            if (hIconSmall || hIconLarge) {
+                icon = QIcon();
+                if (hIconSmall) {
+                    QPixmap pixmap = QPixmap::fromImage(QImage::fromHICON(hIconSmall));
+                    if (!pixmap.isNull()) {
+                        icon.addPixmap(pixmap);
+                    }
+                    DestroyIcon(hIconSmall);
+                }
+                if (hIconLarge) {
+                    QPixmap pixmap = QPixmap::fromImage(QImage::fromHICON(hIconLarge));
+                    if (!pixmap.isNull()) {
+                        icon.addPixmap(pixmap);
+                    }
+                    DestroyIcon(hIconLarge);
+                }
+                if (!icon.isNull() && !icon.availableSizes().isEmpty()) {
+                    qDebug() << "System tray icon updated from Windows executable resources";
+                }
+            }
+        }
+        #endif
+    }
+    
+    // Fallback: try loading from application directory
+    if (icon.isNull() || icon.availableSizes().isEmpty()) {
+        QString appDir = QCoreApplication::applicationDirPath();
+        QString iconPath = appDir + "/icon.ico";
+        if (QFile::exists(iconPath)) {
+            icon = QIcon(iconPath);
+            if (!icon.isNull() && !icon.availableSizes().isEmpty()) {
+                qDebug() << "System tray icon updated from application directory:" << iconPath;
+            }
+        }
+        if (icon.isNull() || icon.availableSizes().isEmpty()) {
+            iconPath = appDir + "/icon.png";
+            if (QFile::exists(iconPath)) {
+                icon = QIcon(iconPath);
+                if (!icon.isNull() && !icon.availableSizes().isEmpty()) {
+                    qDebug() << "System tray icon updated from application directory:" << iconPath;
+                }
+            }
+        }
+    }
+    
+    // Fallback to Qt resources if all else failed
+    if (icon.isNull() || icon.availableSizes().isEmpty()) {
+        icon = QIcon(":/icon.png");
+        if (!icon.isNull() && !icon.availableSizes().isEmpty()) {
+            qDebug() << "System tray icon updated from Qt resources (icon.png)";
+        }
+    }
+    if (icon.isNull() || icon.availableSizes().isEmpty()) {
+        icon = QIcon(":/icon.ico");
+        if (!icon.isNull() && !icon.availableSizes().isEmpty()) {
+            qDebug() << "System tray icon updated from Qt resources (icon.ico)";
+        }
+    }
+    
+    if (!icon.isNull()) {
+        m_trayIcon->setIcon(icon);
+        qDebug() << "System tray icon updated successfully";
+    } else {
+        qWarning() << "Failed to load icon for system tray - all methods failed";
     }
 }
 

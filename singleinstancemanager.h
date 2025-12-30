@@ -20,6 +20,7 @@ public:
 
     bool isPrimaryInstance() const { return m_isPrimaryInstance; }
     bool tryActivateExistingInstance(const QString &filePath = QString());
+    void updateTrayIcon();  // Update tray icon after app icon is set
 
 signals:
     void isPrimaryInstanceChanged();

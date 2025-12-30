@@ -1,5 +1,11 @@
 #include "colorutils.h"
 
+// Fix Windows min/max macro conflicts with std::min/std::max
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include <QFileInfo>
 #include <QFile>
 #include <QTextStream>
@@ -54,6 +60,14 @@
 namespace {
 constexpr int kSampleSize = 96;
 constexpr auto kFallbackColor = "#060606";
+
+// Bad Apple frame storage (static to persist across calls)
+static QByteArray s_badAppleFrameData;
+static bool s_badAppleFramesLoaded = false;
+static constexpr int BAD_APPLE_FRAME_WIDTH = 64;
+static constexpr int BAD_APPLE_FRAME_HEIGHT = 48;
+static constexpr int BAD_APPLE_FRAME_COUNT = 6572;
+static constexpr int BAD_APPLE_FRAME_BYTES = (BAD_APPLE_FRAME_WIDTH * BAD_APPLE_FRAME_HEIGHT + 7) / 8; // Bytes per frame (rounded up)
 }
 
 ColorUtils::ColorUtils(QObject *parent)
@@ -821,6 +835,84 @@ QVariantMap ColorUtils::getAudioFormatInfo(const QUrl &audioUrl, qint64 duration
     return result;
 }
 
+qint64 ColorUtils::getAudioDuration(const QUrl &audioUrl) const
+{
+    const QString localPath = audioUrl.isLocalFile()
+            ? audioUrl.toLocalFile()
+            : audioUrl.toString(QUrl::PreferLocalFile);
+
+    if (localPath.isEmpty() || !QFileInfo::exists(localPath))
+        return 0;
+
+    // Use QMediaPlayer to get duration from metadata
+    // This is faster than waiting for full decoding
+    QMediaPlayer player;
+    player.setSource(QUrl::fromLocalFile(localPath));
+    
+    // Wait for metadata to be available (duration is usually in metadata)
+    QEventLoop loop;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    timeout.setInterval(1000); // 1 second timeout
+    
+    bool durationFound = false;
+    qint64 duration = 0;
+    
+    // Try to get duration from metadata first (faster)
+    QObject::connect(&player, &QMediaPlayer::metaDataChanged, [&]() {
+        QMediaMetaData meta = player.metaData();
+        // Some formats store duration in metadata
+        QVariant durationVar = meta.value(QMediaMetaData::Duration);
+        if (durationVar.isValid()) {
+            duration = durationVar.toLongLong();
+            if (duration > 0) {
+                durationFound = true;
+                timeout.stop();
+                loop.quit();
+                return;
+            }
+        }
+        
+        // Also check player.duration property
+        if (player.duration() > 0) {
+            duration = player.duration();
+            durationFound = true;
+            timeout.stop();
+            loop.quit();
+        }
+    });
+    
+    // Also check duration property changes
+    QObject::connect(&player, &QMediaPlayer::durationChanged, [&](qint64 d) {
+        if (d > 0) {
+            duration = d;
+            durationFound = true;
+            timeout.stop();
+            loop.quit();
+        }
+    });
+    
+    QObject::connect(&timeout, &QTimer::timeout, [&]() {
+        if (!durationFound) {
+            // Try one more time to get duration
+            if (player.duration() > 0) {
+                duration = player.duration();
+                durationFound = true;
+            }
+        }
+        loop.quit();
+    });
+    
+    timeout.start();
+    loop.exec();
+    
+    if (durationFound && duration > 0) {
+        return duration;
+    }
+    
+    return 0;
+}
+
 bool ColorUtils::isFFmpegAvailable() const
 {
     // Try both "ffmpeg" and "ffmpeg.exe" for Windows compatibility
@@ -1008,6 +1100,12 @@ QString ColorUtils::getAppPath() const
     return QCoreApplication::applicationFilePath();
 }
 
+QString ColorUtils::getAppDirectory() const
+{
+    QFileInfo fileInfo(QCoreApplication::applicationFilePath());
+    return fileInfo.absolutePath();
+}
+
 void ColorUtils::openDefaultAppsSettings() const
 {
 #ifdef Q_OS_WIN
@@ -1181,5 +1279,118 @@ void ColorUtils::copyToClipboard(const QString &text) const
     if (clipboard) {
         clipboard->setText(text);
     }
+}
+
+bool ColorUtils::loadBadAppleFrames(const QUrl &binaryFileUrl) const
+{
+    const QString localPath = binaryFileUrl.isLocalFile()
+            ? binaryFileUrl.toLocalFile()
+            : binaryFileUrl.toString(QUrl::PreferLocalFile);
+
+    if (localPath.isEmpty() || !QFileInfo::exists(localPath)) {
+        qWarning() << "[BadApple] Binary file not found:" << localPath;
+        return false;
+    }
+
+    QFile file(localPath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        qWarning() << "[BadApple] Failed to open binary file:" << localPath;
+        return false;
+    }
+
+    s_badAppleFrameData = file.readAll();
+    file.close();
+
+    // Verify size: should be BAD_APPLE_FRAME_COUNT * BAD_APPLE_FRAME_BYTES
+    const qint64 expectedSize = BAD_APPLE_FRAME_COUNT * BAD_APPLE_FRAME_BYTES;
+    if (s_badAppleFrameData.size() < expectedSize) {
+        qWarning() << "[BadApple] Invalid file size. Expected:" << expectedSize << "Got:" << s_badAppleFrameData.size();
+        s_badAppleFrameData.clear();
+        return false;
+    }
+
+    s_badAppleFramesLoaded = true;
+    qDebug() << "[BadApple] Loaded" << s_badAppleFrameData.size() << "bytes (" << BAD_APPLE_FRAME_COUNT << "frames)";
+    return true;
+}
+
+QUrl ColorUtils::createBadAppleTexture() const
+{
+    if (!s_badAppleFramesLoaded) {
+        return QUrl();
+    }
+
+    // Create a texture image: frames packed in a grid to fit GPU limits
+    // Max texture size is typically 16384, so we arrange frames in a grid
+    // Frames per row: 16384 / 64 = 256 frames
+    // Total frames: 6572, so we need ceil(6572/256) = 26 rows
+    const int framesPerRow = 256;  // 16384 / 64 = 256
+    const int numRows = (BAD_APPLE_FRAME_COUNT + framesPerRow - 1) / framesPerRow;  // Ceiling division
+    const int textureWidth = framesPerRow * BAD_APPLE_FRAME_WIDTH;  // 256 * 64 = 16384
+    const int textureHeight = numRows * BAD_APPLE_FRAME_HEIGHT;    // 26 * 48 = 1248
+    
+    QImage texture(textureWidth, textureHeight, QImage::Format_RGB32);
+    texture.fill(Qt::black);
+    
+    // Convert each frame from binary to image
+    for (int frameIndex = 0; frameIndex < BAD_APPLE_FRAME_COUNT; ++frameIndex) {
+        const int offset = frameIndex * BAD_APPLE_FRAME_BYTES;
+        if (offset + BAD_APPLE_FRAME_BYTES > s_badAppleFrameData.size()) {
+            break;
+        }
+        
+        const uchar *frameBytes = reinterpret_cast<const uchar*>(s_badAppleFrameData.constData() + offset);
+        
+        // Calculate grid position
+        const int row = frameIndex / framesPerRow;
+        const int col = frameIndex % framesPerRow;
+        const int frameStartX = col * BAD_APPLE_FRAME_WIDTH;
+        const int frameStartY = row * BAD_APPLE_FRAME_HEIGHT;
+        
+        // Convert binary frame to image pixels
+        for (int y = 0; y < BAD_APPLE_FRAME_HEIGHT; ++y) {
+            for (int x = 0; x < BAD_APPLE_FRAME_WIDTH; ++x) {
+                const int bitIndex = y * BAD_APPLE_FRAME_WIDTH + x;
+                const int byteIndex = bitIndex / 8;
+                const int bitOffset = 7 - (bitIndex % 8);
+                
+                if (byteIndex < BAD_APPLE_FRAME_BYTES) {
+                    const bool isWhite = (frameBytes[byteIndex] >> bitOffset) & 1;
+                    const int pixelX = frameStartX + x;
+                    const int pixelY = frameStartY + y;
+                    const QRgb color = isWhite ? qRgb(255, 255, 255) : qRgb(0, 0, 0);
+                    texture.setPixel(pixelX, pixelY, color);
+                }
+            }
+        }
+    }
+    
+    // Save to temporary file
+    QTemporaryFile tempFile;
+    tempFile.setFileTemplate(QDir::tempPath() + "/badapple_texture_XXXXXX.png");
+    if (!tempFile.open()) {
+        qWarning() << "[BadApple] Failed to create temporary texture file";
+        return QUrl();
+    }
+    
+    if (!texture.save(tempFile.fileName(), "PNG")) {
+        qWarning() << "[BadApple] Failed to save texture image";
+        return QUrl();
+    }
+    
+    tempFile.setAutoRemove(false);  // Keep file for shader use
+    qDebug() << "[BadApple] Created texture:" << tempFile.fileName();
+    
+    return QUrl::fromLocalFile(tempFile.fileName());
+}
+
+int ColorUtils::getBadAppleFrameCount() const
+{
+    return s_badAppleFramesLoaded ? BAD_APPLE_FRAME_COUNT : 0;
+}
+
+bool ColorUtils::isBadAppleFramesLoaded() const
+{
+    return s_badAppleFramesLoaded;
 }
 

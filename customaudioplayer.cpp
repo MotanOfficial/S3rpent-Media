@@ -25,6 +25,7 @@ CustomAudioPlayer::CustomAudioPlayer(QObject *parent)
     , m_bytesWritten(0)
     , m_basePosition(0)
     , m_playbackState(StoppedState)
+    , m_seekPreserveState(StoppedState)
     , m_volume(1.0)
     , m_seekable(false)
     , m_loop(false)
@@ -369,7 +370,8 @@ void CustomAudioPlayer::seek(qint64 position)
     emit positionChanged();
     
     // If decoder is still running, we need to restart it to seek
-    // Stop current playback
+    // Stop current playback and save state to restore after seeking
+    m_seekPreserveState = m_playbackState;  // Save current state (Playing or Paused)
     bool wasPlaying = (m_playbackState == PlayingState);
     
     // Stop decoder
@@ -553,9 +555,26 @@ void CustomAudioPlayer::onBufferReady()
                             if (m_writeTimer && !m_writeTimer->isActive()) {
                                 m_writeTimer->start();
                             }
-                            // Set playback state to playing
+                            // Restore playback state (only play if it was playing before seeking)
+                            if (m_seekPreserveState == PlayingState) {
                             if (m_playbackState != PlayingState) {
                                 updatePlaybackState(PlayingState);
+                            }
+                            } else {
+                                // Was paused - keep it paused (don't start audio sink)
+                                if (m_audioSink) {
+                                    m_audioSink->suspend();
+                                }
+                                if (m_playbackState != PausedState) {
+                                    updatePlaybackState(PausedState);
+                                }
+                                // Don't start write timer or position timer if paused
+                                if (m_writeTimer && m_writeTimer->isActive()) {
+                                    m_writeTimer->stop();
+                                }
+                                if (m_positionTimer && m_positionTimer->isActive()) {
+                                    m_positionTimer->stop();
+                                }
                             }
                         }
                     }

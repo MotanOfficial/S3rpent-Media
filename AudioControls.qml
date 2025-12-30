@@ -7,6 +7,7 @@ import Qt5Compat.GraphicalEffects
 
 Item {
     id: audioControls
+    clip: false  // Don't clip tooltips that extend outside
 
     property int position: 0
     property int duration: 0
@@ -21,10 +22,29 @@ Item {
     property var eqBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  // 10-band EQ, values from -12 to +12 dB
     property bool eqEnabled: false  // EQ enabled state
     property bool loop: false  // Loop playback state
+    
+    // Calculate if background is light or dark to determine icon color
+    readonly property color backgroundColor: Qt.rgba(
+        Qt.lighter(accentColor, 1.1).r,
+        Qt.lighter(accentColor, 1.1).g,
+        Qt.lighter(accentColor, 1.1).b,
+        0.85
+    )
+    readonly property real backgroundLuminance: (0.299 * backgroundColor.r + 0.587 * backgroundColor.g + 0.114 * backgroundColor.b)
+    readonly property color iconColor: backgroundLuminance > 0.5 ? "#000000" : "#ffffff"
+    // Pressed button color - use contrasting color for visibility
+    readonly property color pressedButtonColor: backgroundLuminance > 0.5 
+        ? Qt.rgba(0, 0, 0, 0.15)  // Dark overlay on light background
+        : Qt.rgba(255, 255, 255, 0.2)  // Light overlay on dark background
+    // Hover button color - subtle but visible
+    readonly property color hoverButtonColor: backgroundLuminance > 0.5 
+        ? Qt.rgba(0, 0, 0, 0.08)  // Subtle dark overlay on light background
+        : Qt.rgba(255, 255, 255, 0.12)  // Subtle light overlay on dark background
 
     signal playClicked()
     signal pauseClicked()
     signal seekRequested(real position)
+    signal seekReleased()  // Emitted when user releases the progress bar
     signal volumeAdjusted(real volume)
     signal muteToggled(bool muted)
     signal loopClicked()
@@ -52,61 +72,114 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        radius: 12
-        color: Qt.rgba(0, 0, 0, 0.85)
-        border.color: Qt.rgba(255, 255, 255, 0.15)
+        radius: 20
+        // Use subtle colored background - less intense than settings
+        color: Qt.rgba(
+            Qt.lighter(accentColor, 1.1).r,
+            Qt.lighter(accentColor, 1.1).g,
+            Qt.lighter(accentColor, 1.1).b,
+            0.85
+        )
+        border.color: Qt.rgba(255, 255, 255, 0.2)
         border.width: 1
-
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 8
-            spacing: 2
+        clip: false  // Don't clip tooltips that extend outside
+        
+        // TapHandler to stop event propagation to InputHandlers
+        TapHandler {
+            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            onTapped: {
+                // Stop propagation - don't toggle controls when clicking on them
+            }
+        }
+        
+        // Modern drop shadow using layer (like settings page)
+        layer.enabled: true
+        layer.effect: DropShadow {
+            radius: 20
+            samples: 41
+            color: Qt.rgba(0, 0, 0, 0.5)
+            verticalOffset: 4
+            horizontalOffset: 0
+        }
 
             // Main controls row: [Play/Pause] [Volume] [Progress Bar] [Loop] [More]
             RowLayout {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 32
+            id: controlsRowLayout
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.leftMargin: 10
+            anchors.rightMargin: 10
+            anchors.topMargin: 10
+            anchors.bottomMargin: 14
                 spacing: 8
+            z: 1
+            clip: false  // Don't clip tooltips
 
                 // LEFT SIDE: Play/Pause icon
                 Item {
-                    Layout.preferredWidth: 32
-                    Layout.preferredHeight: 32
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 36
+                    Layout.alignment: Qt.AlignVCenter
 
                     Rectangle {
                         id: playPauseButton
-                        anchors.centerIn: parent
-                        width: 32; height: 32
+                        anchors.fill: parent
                         radius: 8
-                        color: playPauseMouse.containsMouse
-                               ? Qt.rgba(accentColor.r, accentColor.g, accentColor.b, 0.25)
-                               : "transparent"
+                        property bool isHovered: false
+                        property bool isPressed: false
+                        
+                        color: isPressed
+                               ? pressedButtonColor
+                               : (isHovered
+                                  ? hoverButtonColor
+                                  : "transparent")
+                        
+                        Behavior on color {
+                            ColorAnimation { duration: 200; easing.type: Easing.OutCubic }
+                        }
+                        Behavior on scale {
+                            NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+                        }
+                        
+                        scale: isPressed ? 0.9 : (isHovered ? 1.05 : 1.0)
 
                         Image {
                             id: playPauseIcon
                             anchors.centerIn: parent
-                            width: 20; height: 20
+                            width: 18
+                            height: 18
                             source: playbackState === MediaPlayer.PlayingState
                                    ? "qrc:/qlementine/icons/16/media/pause.svg"
                                    : "qrc:/qlementine/icons/16/media/play.svg"
-                            sourceSize.width: 20
-                            sourceSize.height: 20
-                            fillMode: Image.PreserveAspectFit
+                            sourceSize: Qt.size(18, 18)
+                            visible: false
                         }
                         ColorOverlay {
                             anchors.fill: playPauseIcon
                             source: playPauseIcon
-                            color: "#ffffff"
+                            color: iconColor
+                            opacity: 0.9
                         }
 
-                        MouseArea {
-                            id: playPauseMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: playbackState === MediaPlayer.PlayingState
+                        TapHandler {
+                            id: playPauseTap
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            acceptedButtons: Qt.LeftButton
+                            
+                            onTapped: playbackState === MediaPlayer.PlayingState
                                        ? pauseClicked()
                                        : playClicked()
+                            onPressedChanged: playPauseButton.isPressed = pressed
+                        }
+                        
+                        HoverHandler {
+                            id: playPauseHover
+                            cursorShape: Qt.PointingHandCursor
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            onHoveredChanged: playPauseButton.isHovered = hovered
                         }
                     }
                 }
@@ -114,46 +187,72 @@ Item {
                 // Volume icon
                 Item {
                     id: volumeIconContainer
-                    Layout.preferredWidth: 32
-                    Layout.preferredHeight: 32
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 36
+                    Layout.alignment: Qt.AlignVCenter
 
                     property bool volumeHovered: false
 
                     Rectangle {
                         id: volumeButton
-                        anchors.centerIn: parent
-                        width: 32; height: 32
+                        anchors.fill: parent
                         radius: 8
-                        color: volumeIconContainer.volumeHovered
-                               ? Qt.rgba(accentColor.r, accentColor.g, accentColor.b, 0.25)
-                               : "transparent"
+                        property bool isHovered: false
+                        property bool isPressed: false
+                        
+                        color: isPressed
+                               ? pressedButtonColor
+                               : (isHovered
+                                  ? hoverButtonColor
+                                  : "transparent")
+                        
+                        Behavior on color {
+                            ColorAnimation { duration: 200; easing.type: Easing.OutCubic }
+                        }
+                        Behavior on scale {
+                            NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+                        }
+                        
+                        scale: isPressed ? 0.9 : (isHovered ? 1.05 : 1.0)
 
                         Image {
                             id: volumeIcon
                             anchors.centerIn: parent
-                            width: 20; height: 20
+                            width: 18
+                            height: 18
                             source: getVolumeIconPath()
-                            sourceSize.width: 20
-                            sourceSize.height: 20
-                            fillMode: Image.PreserveAspectFit
+                            sourceSize: Qt.size(18, 18)
+                            visible: false
                         }
                         ColorOverlay {
                             anchors.fill: volumeIcon
                             source: volumeIcon
-                            color: "#ffffff"
+                            color: iconColor
+                            opacity: 0.9
                         }
 
-                        MouseArea {
-                            id: volumeButtonMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
+                        TapHandler {
+                            id: volumeButtonTap
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            acceptedButtons: Qt.LeftButton
+                            
+                            onTapped: { muted=!muted; muteToggled(muted)}
+                            onPressedChanged: volumeButton.isPressed = pressed
+                        }
+                        
+                        HoverHandler {
+                            id: volumeButtonHover
                             cursorShape: Qt.PointingHandCursor
-                            onEntered: volumeIconContainer.volumeHovered = true
-                            onExited: {
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            onHoveredChanged: {
+                                volumeButton.isHovered = hovered
+                                if (hovered) {
+                                    volumeIconContainer.volumeHovered = true
+                                } else {
                                 // Small delay to allow moving to popup
                                 volumeHoverTimer.restart()
                             }
-                            onClicked: { muted=!muted; muteToggled(muted)} 
+                            }
                         }
                     }
 
@@ -162,39 +261,87 @@ Item {
                         interval: 100
                         onTriggered: {
                             // Don't hide if slider is being dragged
-                            if (!volumePopupMouse.containsMouse && !volumeSliderArea.containsMouse && !volumeButtonMouse.containsMouse && !volumeSliderArea.pressed) {
+                            if (!volumePopupHover.hovered && !volumeSliderArea.containsMouse && !volumeButtonHover.hovered && !volumeSliderArea.pressed) {
                                 volumeIconContainer.volumeHovered = false
                             }
                         }
                     }
 
-                    // Volume dropdown popup
+                    // Volume dropdown popup - positioned outside to avoid clipping
                     Rectangle {
                         id: volumePopup
-                        anchors.bottom: parent.top
-                        anchors.bottomMargin: 8
-                        anchors.horizontalCenter: parent.horizontalCenter
+                        parent: audioControls
                         width: 120
                         height: 50
-                        radius: 8
-                        color: Qt.rgba(0, 0, 0, 0.9)
+                        radius: 10
+                        // Use the same dynamic color as the controls bar
+                        color: Qt.rgba(
+                            Qt.lighter(accentColor, 1.1).r,
+                            Qt.lighter(accentColor, 1.1).g,
+                            Qt.lighter(accentColor, 1.1).b,
+                            0.95
+                        )
                         border.color: Qt.rgba(255, 255, 255, 0.2)
                         border.width: 1
                         visible: volumeIconContainer.volumeHovered
                         opacity: visible ? 1 : 0
-                        Behavior on opacity { NumberAnimation { duration: 150 } }
+                        scale: visible ? 1.0 : 0.8
+                        z: 1000
+                        
+                        // Calculate position: RowLayout position + button Item position + button center
+                        x: {
+                            var buttonItem = volumeIconContainer
+                            if (!buttonItem || !controlsRowLayout) return 0
+                            // Get RowLayout's position in audioControls
+                            var layoutX = controlsRowLayout.x
+                            // Get button Item's x position in RowLayout
+                            var itemX = buttonItem.x
+                            // Center: layout x + item x + item width/2 - popup width/2
+                            return layoutX + itemX + (buttonItem.width / 2) - (width / 2)
+                        }
+                        y: {
+                            var buttonItem = volumeIconContainer
+                            if (!buttonItem || !controlsRowLayout) return 0
+                            // Get RowLayout's position in audioControls
+                            var layoutY = controlsRowLayout.y
+                            // Position above: layout y + item y - popup height - margin
+                            return layoutY + buttonItem.y - height - 10
+                        }
+                        
+                        Behavior on opacity { 
+                            NumberAnimation { 
+                                duration: 250
+                                easing.type: Easing.OutCubic 
+                            } 
+                        }
+                        Behavior on scale {
+                            NumberAnimation {
+                                duration: 250
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                        
+                        // Modern drop shadow using layer (like main background)
+                        layer.enabled: true
+                        layer.effect: DropShadow {
+                            radius: 20
+                            samples: 41
+                            color: Qt.rgba(0, 0, 0, 0.5)
+                            verticalOffset: 4
+                            horizontalOffset: 0
+                        }
 
-                        // MouseArea to keep popup visible when hovering over it (covers entire popup including slider)
-                        MouseArea {
-                            id: volumePopupMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            propagateComposedEvents: true
-                            acceptedButtons: Qt.NoButton  // Don't intercept clicks, let slider handle them
-                            onEntered: volumeIconContainer.volumeHovered = true
-                            onExited: {
+                        // HoverHandler to keep popup visible when hovering over it
+                        HoverHandler {
+                            id: volumePopupHover
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            onHoveredChanged: {
+                                if (hovered) {
+                                    volumeIconContainer.volumeHovered = true
+                                } else {
                                 // Small delay to allow moving back to button
                                 volumeHoverTimer.restart()
+                                }
                             }
                         }
 
@@ -239,7 +386,7 @@ Item {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                z: 1  // Above the popup MouseArea
+                                z: 1  // Above the popup HoverHandler
                                 propagateComposedEvents: true
 
                                 onEntered: volumeIconContainer.volumeHovered = true
@@ -275,6 +422,7 @@ Item {
                 // CENTER: Progress bar
                 ColumnLayout {
                     Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignVCenter
                     spacing: 2
 
                     RowLayout {
@@ -285,10 +433,13 @@ Item {
                         // current time
                         Text {
                             Layout.preferredWidth: 35
-                            color: "#ffffff"
-                            font.pixelSize: 11
+                            color: iconColor
+                            font.pixelSize: 12
+                            font.family: "Segoe UI"
+                            font.weight: Font.Medium
                             horizontalAlignment: Text.AlignRight
                             text: formatTime(position)
+                            opacity: 0.9
                         }
 
                         // progress bar
@@ -339,54 +490,87 @@ Item {
                                     const newPos = (mouse.x/parent.width)*duration
                                     seekRequested(Math.max(0, Math.min(newPos, duration)))
                                 }
+                                
+                                onReleased: {
+                                    // Emit seekReleased when user releases the progress bar
+                                    // This allows immediate commit of the seek (no timer delay)
+                                    seekReleased()
+                                }
                             }
                         }
 
                         // total time
                         Text {
                             Layout.preferredWidth: 35
-                            color: "#ffffff"
-                            font.pixelSize: 11
+                            color: iconColor
+                            font.pixelSize: 12
+                            font.family: "Segoe UI"
+                            font.weight: Font.Medium
                             horizontalAlignment: Text.AlignLeft
                             text: formatTime(duration)
+                            opacity: 0.9
                         }
                     }
                 }
 
                 // RIGHT SIDE: Loop icon
                 Item {
-                    Layout.preferredWidth: 32
-                    Layout.preferredHeight: 32
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 36
+                    Layout.alignment: Qt.AlignVCenter
 
                     Rectangle {
-                        anchors.centerIn: parent
-                        width: 32; height: 32
+                        id: loopButton
+                        anchors.fill: parent
                         radius: 8
-                        color: loopMouse.containsMouse
-                               ? Qt.rgba(accentColor.r, accentColor.g, accentColor.b, 0.25)
-                               : "transparent"
+                        property bool isHovered: false
+                        property bool isPressed: false
+                        
+                        color: isPressed
+                               ? pressedButtonColor
+                               : (isHovered
+                                  ? hoverButtonColor
+                                  : "transparent")
+                        
+                        Behavior on color {
+                            ColorAnimation { duration: 200; easing.type: Easing.OutCubic }
+                        }
+                        Behavior on scale {
+                            NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+                        }
+                        
+                        scale: isPressed ? 0.9 : (isHovered ? 1.05 : 1.0)
 
                         Image {
                             id: loopIcon
                             anchors.centerIn: parent
-                            width: 20; height: 20
+                            width: 18
+                            height: 18
                             source: "qrc:/qlementine/icons/16/media/repeat.svg"
-                            sourceSize.width: 20
-                            sourceSize.height: 20
-                            fillMode: Image.PreserveAspectFit
+                            sourceSize: Qt.size(18, 18)
+                            visible: false
                         }
                         ColorOverlay {
                             anchors.fill: loopIcon
                             source: loopIcon
-                            color: loop ? accentColor : "#ffffff"
+                            color: loop ? accentColor : iconColor
+                            opacity: 0.9
                         }
 
-                        MouseArea {
-                            id: loopMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
+                        TapHandler {
+                            id: loopTap
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            acceptedButtons: Qt.LeftButton
+                            
+                            onTapped: loopClicked()
+                            onPressedChanged: loopButton.isPressed = pressed
+                        }
+                        
+                        HoverHandler {
+                            id: loopHover
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: loopClicked()
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            onHoveredChanged: loopButton.isHovered = hovered
                         }
                     }
                 }
@@ -394,44 +578,71 @@ Item {
                 // RIGHT SIDE: More icon (three dots)
                 Item {
                     id: moreIconContainer
-                    Layout.preferredWidth: 32
-                    Layout.preferredHeight: 32
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 36
+                    Layout.alignment: Qt.AlignVCenter
 
                     property bool moreHovered: false
 
                     Rectangle {
-                        anchors.centerIn: parent
-                        width: 32; height: 32
+                        id: moreButton
+                        anchors.fill: parent
                         radius: 8
-                        color: moreIconContainer.moreHovered
-                               ? Qt.rgba(accentColor.r, accentColor.g, accentColor.b, 0.25)
-                               : "transparent"
+                        property bool isHovered: false
+                        property bool isPressed: false
+                        
+                        color: isPressed
+                               ? pressedButtonColor
+                               : (isHovered
+                                  ? hoverButtonColor
+                                  : "transparent")
+                        
+                        Behavior on color {
+                            ColorAnimation { duration: 200; easing.type: Easing.OutCubic }
+                        }
+                        Behavior on scale {
+                            NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+                        }
+                        
+                        scale: isPressed ? 0.9 : (isHovered ? 1.05 : 1.0)
 
                         Image {
                             id: moreIcon
                             anchors.centerIn: parent
-                            width: 20; height: 20
+                            width: 18
+                            height: 18
                             source: "qrc:/qlementine/icons/16/navigation/menu-dots.svg"
-                            sourceSize.width: 20
-                            sourceSize.height: 20
-                            fillMode: Image.PreserveAspectFit
+                            sourceSize: Qt.size(18, 18)
+                            visible: false
                         }
                         ColorOverlay {
                             anchors.fill: moreIcon
                             source: moreIcon
-                            color: "#ffffff"
+                            color: iconColor
+                            opacity: 0.9
                         }
 
-                        MouseArea {
-                            id: moreMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
+                        TapHandler {
+                            id: moreTap
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            acceptedButtons: Qt.LeftButton
+                            
+                            onTapped: moreClicked()
+                            onPressedChanged: moreButton.isPressed = pressed
+                        }
+                        
+                        HoverHandler {
+                            id: moreHover
                             cursorShape: Qt.PointingHandCursor
-                            onEntered: moreIconContainer.moreHovered = true
-                            onExited: {
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            onHoveredChanged: {
+                                moreButton.isHovered = hovered
+                                if (hovered) {
+                                    moreIconContainer.moreHovered = true
+                                } else {
                                 moreHoverTimer.restart()
                             }
-                            onClicked: moreClicked()
+                            }
                         }
                     }
 
@@ -439,41 +650,89 @@ Item {
                         id: moreHoverTimer
                         interval: 100
                         onTriggered: {
-                            if (!morePopupMouse.containsMouse && !moreMouse.containsMouse && 
+                            if (!morePopupHover.hovered && !moreHover.hovered && 
                                 !pitchSliderArea.containsMouse && !tempoSliderArea.containsMouse &&
-                                !eqButtonMouse.containsMouse &&
+                                !eqButtonHover.hovered &&
                                 !pitchSliderArea.pressed && !tempoSliderArea.pressed) {
                                 moreIconContainer.moreHovered = false
                             }
                         }
                     }
 
-                    // More options dropdown popup
+                    // More options dropdown popup - positioned outside to avoid clipping
                     Rectangle {
                         id: morePopup
-                        anchors.bottom: parent.top
-                        anchors.bottomMargin: 8
-                        anchors.horizontalCenter: parent.horizontalCenter
+                        parent: audioControls
                         width: 140
                         height: 120
-                        radius: 8
-                        color: Qt.rgba(0, 0, 0, 0.9)
+                        radius: 10
+                        // Use the same dynamic color as the controls bar
+                        color: Qt.rgba(
+                            Qt.lighter(accentColor, 1.1).r,
+                            Qt.lighter(accentColor, 1.1).g,
+                            Qt.lighter(accentColor, 1.1).b,
+                            0.95
+                        )
                         border.color: Qt.rgba(255, 255, 255, 0.2)
                         border.width: 1
                         visible: moreIconContainer.moreHovered
                         opacity: visible ? 1 : 0
-                        Behavior on opacity { NumberAnimation { duration: 150 } }
+                        scale: visible ? 1.0 : 0.8
+                        z: 1000
+                        
+                        // Calculate position: RowLayout position + button Item position + button center
+                        x: {
+                            var buttonItem = moreIconContainer
+                            if (!buttonItem || !controlsRowLayout) return 0
+                            // Get RowLayout's position in audioControls
+                            var layoutX = controlsRowLayout.x
+                            // Get button Item's x position in RowLayout
+                            var itemX = buttonItem.x
+                            // Center: layout x + item x + item width/2 - popup width/2
+                            return layoutX + itemX + (buttonItem.width / 2) - (width / 2)
+                        }
+                        y: {
+                            var buttonItem = moreIconContainer
+                            if (!buttonItem || !controlsRowLayout) return 0
+                            // Get RowLayout's position in audioControls
+                            var layoutY = controlsRowLayout.y
+                            // Position above: layout y + item y - popup height - margin
+                            return layoutY + buttonItem.y - height - 10
+                        }
+                        
+                        Behavior on opacity { 
+                            NumberAnimation { 
+                                duration: 250
+                                easing.type: Easing.OutCubic 
+                            } 
+                        }
+                        Behavior on scale {
+                            NumberAnimation {
+                                duration: 250
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                        
+                        // Modern drop shadow using layer (like main background)
+                        layer.enabled: true
+                        layer.effect: DropShadow {
+                            radius: 20
+                            samples: 41
+                            color: Qt.rgba(0, 0, 0, 0.5)
+                            verticalOffset: 4
+                            horizontalOffset: 0
+                        }
 
-                        // MouseArea to keep popup visible when hovering over it
-                        MouseArea {
-                            id: morePopupMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            propagateComposedEvents: true
-                            acceptedButtons: Qt.NoButton
-                            onEntered: moreIconContainer.moreHovered = true
-                            onExited: {
+                        // HoverHandler to keep popup visible when hovering over it
+                        HoverHandler {
+                            id: morePopupHover
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            onHoveredChanged: {
+                                if (hovered) {
+                                    moreIconContainer.moreHovered = true
+                                } else {
                                 moreHoverTimer.restart()
+                                }
                             }
                         }
 
@@ -490,8 +749,11 @@ Item {
                                 Text {
                                     Layout.fillWidth: true
                                     text: "Pitch: " + (pitch * 100).toFixed(0) + "%"
-                                    color: "#ffffff"
-                                    font.pixelSize: 11
+                                    color: iconColor
+                                    font.pixelSize: 12
+                                    font.family: "Segoe UI"
+                                    font.weight: Font.Medium
+                                    opacity: 0.9
                                 }
 
                                 Item {
@@ -573,8 +835,11 @@ Item {
                                 Text {
                                     Layout.fillWidth: true
                                     text: "Tempo: " + (tempo * 100).toFixed(0) + "%"
-                                    color: "#ffffff"
-                                    font.pixelSize: 11
+                                    color: iconColor
+                                    font.pixelSize: 12
+                                    font.family: "Segoe UI"
+                                    font.weight: Font.Medium
+                                    opacity: 0.9
                                 }
 
                                 Item {
@@ -650,38 +915,61 @@ Item {
                             
                             // EQ button
                             Rectangle {
+                                id: eqButton
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 32
-                                radius: 6
-                                color: eqButtonMouse.containsMouse 
-                                       ? Qt.rgba(accentColor.r, accentColor.g, accentColor.b, 0.25)
-                                       : "transparent"
+                                radius: 8
+                                property bool isHovered: false
+                                property bool isPressed: false
+                                
+                                color: isPressed
+                                       ? pressedButtonColor
+                                       : (isHovered
+                                          ? hoverButtonColor
+                                          : "transparent")
+                                
+                                Behavior on color {
+                                    ColorAnimation { duration: 200; easing.type: Easing.OutCubic }
+                                }
+                                Behavior on scale {
+                                    NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+                                }
+                                
+                                scale: isPressed ? 0.95 : (isHovered ? 1.02 : 1.0)
                                 
                                 Text {
                                     anchors.centerIn: parent
                                     text: "Equalizer"
-                                    color: "#ffffff"
-                                    font.pixelSize: 11
+                                    color: iconColor
+                                    font.pixelSize: 12
+                                    font.family: "Segoe UI"
+                                    font.weight: Font.Medium
+                                    opacity: 0.9
                                 }
                                 
-                                MouseArea {
-                                    id: eqButtonMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    z: 1
-                                    propagateComposedEvents: true
+                                TapHandler {
+                                    id: eqButtonTap
+                                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                    acceptedButtons: Qt.LeftButton
                                     
-                                    onEntered: {
-                                        moreIconContainer.moreHovered = true
-                                        moreHoverTimer.stop()
-                                    }
-                                    onExited: {
-                                        moreHoverTimer.restart()
-                                    }
-                                    onClicked: {
+                                    onTapped: {
                                         showEQ = !showEQ
                                         eqToggled(showEQ)
+                                    }
+                                    onPressedChanged: eqButton.isPressed = pressed
+                                }
+                                
+                                HoverHandler {
+                                    id: eqButtonHover
+                                    cursorShape: Qt.PointingHandCursor
+                                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                    onHoveredChanged: {
+                                        eqButton.isHovered = hovered
+                                        if (hovered) {
+                                        moreIconContainer.moreHovered = true
+                                        moreHoverTimer.stop()
+                                        } else {
+                                        moreHoverTimer.restart()
                                     }
                                 }
                             }
@@ -704,10 +992,26 @@ Item {
         visible: showEQ
         
         background: Rectangle {
-            radius: 16
-            color: Qt.rgba(0, 0, 0, 0.95)
+            radius: 20
+            // Use the same dynamic color as the controls bar
+            color: Qt.rgba(
+                Qt.lighter(accentColor, 1.1).r,
+                Qt.lighter(accentColor, 1.1).g,
+                Qt.lighter(accentColor, 1.1).b,
+                0.95
+            )
             border.color: Qt.rgba(255, 255, 255, 0.2)
-            border.width: 2
+            border.width: 1
+            
+            // Modern drop shadow using layer
+            layer.enabled: true
+            layer.effect: DropShadow {
+                radius: 20
+                samples: 41
+                color: Qt.rgba(0, 0, 0, 0.5)
+                verticalOffset: 4
+                horizontalOffset: 0
+            }
         }
         
         onVisibleChanged: {
@@ -723,33 +1027,58 @@ Item {
         
         // Close button
         Rectangle {
+            id: closeButton
             anchors.top: parent.top
             anchors.right: parent.right
             anchors.margins: 12
-            width: 32
-            height: 32
-            radius: 16
-            color: closeButtonMouse.containsMouse 
-                   ? Qt.rgba(accentColor.r, accentColor.g, accentColor.b, 0.3)
-                   : Qt.rgba(255, 255, 255, 0.1)
+            width: 36
+            height: 36
+            radius: 8
+            property bool isHovered: false
+            property bool isPressed: false
+            
+            color: isPressed
+                   ? pressedButtonColor
+                   : (isHovered
+                      ? hoverButtonColor
+                      : "transparent")
+            
+            Behavior on color {
+                ColorAnimation { duration: 200; easing.type: Easing.OutCubic }
+            }
+            Behavior on scale {
+                NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+            }
+            
+            scale: isPressed ? 0.9 : (isHovered ? 1.05 : 1.0)
             
             Text {
                 anchors.centerIn: parent
                 text: "×"
-                color: "#ffffff"
-                font.pixelSize: 24
-                font.bold: true
+                color: iconColor
+                font.pixelSize: 20
+                font.family: "Segoe UI"
+                font.weight: Font.Bold
+                opacity: 0.9
             }
             
-            MouseArea {
-                id: closeButtonMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: {
+            TapHandler {
+                id: closeButtonTap
+                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                acceptedButtons: Qt.LeftButton
+                
+                onTapped: {
                     showEQ = false
                     eqToggled(false)
                 }
+                onPressedChanged: closeButton.isPressed = pressed
+            }
+            
+            HoverHandler {
+                id: closeButtonHover
+                cursorShape: Qt.PointingHandCursor
+                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                onHoveredChanged: closeButton.isHovered = hovered
             }
         }
         
@@ -766,10 +1095,12 @@ Item {
                 Text {
                     Layout.fillWidth: true
                     text: "Equalizer"
-                    color: "#ffffff"
+                    color: iconColor
                     font.pixelSize: 24
-                    font.bold: true
+                    font.family: "Segoe UI"
+                    font.weight: Font.Bold
                     horizontalAlignment: Text.AlignHCenter
+                    opacity: 0.9
                 }
                 
                 // Enable/Disable Toggle
@@ -778,25 +1109,53 @@ Item {
                     Layout.preferredWidth: 80
                     Layout.preferredHeight: 32
                     radius: 16
-                    color: audioControls.eqEnabled ? accentColor : Qt.rgba(255, 255, 255, 0.2)
+                    property bool isHovered: false
+                    property bool isPressed: false
+                    
+                    color: isPressed
+                           ? pressedButtonColor
+                           : (audioControls.eqEnabled 
+                              ? accentColor 
+                              : (isHovered ? hoverButtonColor : Qt.rgba(255, 255, 255, 0.2)))
                     border.color: Qt.rgba(255, 255, 255, 0.3)
                     border.width: 1
+                    
+                    Behavior on color {
+                        ColorAnimation { duration: 200; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on scale {
+                        NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+                    }
+                    
+                    scale: isPressed ? 0.95 : (isHovered ? 1.02 : 1.0)
                     
                     Text {
                         anchors.centerIn: parent
                         text: audioControls.eqEnabled ? "ON" : "OFF"
-                        color: "#ffffff"
+                        color: iconColor
                         font.pixelSize: 12
-                        font.bold: true
+                        font.family: "Segoe UI"
+                        font.weight: Font.Bold
+                        opacity: 0.9
                     }
                     
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
+                    TapHandler {
+                        id: eqToggleTap
+                        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                        acceptedButtons: Qt.LeftButton
+                        
+                        onTapped: {
                             audioControls.eqEnabled = !audioControls.eqEnabled
                             eqToggled(audioControls.eqEnabled)
                         }
+                        onPressedChanged: eqToggleButton.isPressed = pressed
+                    }
+                    
+                    HoverHandler {
+                        id: eqToggleHover
+                        cursorShape: Qt.PointingHandCursor
+                        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                        onHoveredChanged: eqToggleButton.isHovered = hovered
                     }
                 }
             }
@@ -822,9 +1181,12 @@ Item {
                         Text {
                             Layout.fillWidth: true
                             text: freqs[bandIndex] + " Hz"
-                            color: "#ffffff"
+                            color: iconColor
                             font.pixelSize: 10
+                            font.family: "Segoe UI"
+                            font.weight: Font.Medium
                             horizontalAlignment: Text.AlignHCenter
+                            opacity: 0.9
                         }
                         
                         // Vertical slider
@@ -908,8 +1270,11 @@ Item {
                                     let val = eqSliderItem.currentBandValue
                                     return (val >= 0 ? "+" : "") + val.toFixed(0) + " dB"
                                 }
-                                color: "#ffffff"
+                                color: iconColor
                                 font.pixelSize: 9
+                                font.family: "Segoe UI"
+                                font.weight: Font.Medium
+                                opacity: 0.9
                             }
                         }
                     }
@@ -918,31 +1283,57 @@ Item {
             
             // Reset button
             Rectangle {
+                id: resetButton
                 Layout.fillWidth: true
                 Layout.preferredHeight: 36
                 radius: 8
-                color: resetButtonMouse.containsMouse 
-                       ? Qt.rgba(accentColor.r, accentColor.g, accentColor.b, 0.3)
-                       : Qt.rgba(255, 255, 255, 0.1)
+                property bool isHovered: false
+                property bool isPressed: false
+                
+                color: isPressed
+                       ? pressedButtonColor
+                       : (isHovered
+                          ? hoverButtonColor
+                          : "transparent")
+                
+                Behavior on color {
+                    ColorAnimation { duration: 200; easing.type: Easing.OutCubic }
+                }
+                Behavior on scale {
+                    NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+                }
+                
+                scale: isPressed ? 0.95 : (isHovered ? 1.02 : 1.0)
                 
                 Text {
                     anchors.centerIn: parent
                     text: "Reset"
-                    color: "#ffffff"
+                    color: iconColor
                     font.pixelSize: 12
+                    font.family: "Segoe UI"
+                    font.weight: Font.Medium
+                    opacity: 0.9
                 }
                 
-                MouseArea {
-                    id: resetButtonMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
+                TapHandler {
+                    id: resetButtonTap
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    acceptedButtons: Qt.LeftButton
+                    
+                    onTapped: {
                         eqBands = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
                         for (let i = 0; i < 10; i++) {
                             eqBandChanged(i, 0)
                         }
                     }
+                    onPressedChanged: resetButton.isPressed = pressed
+                }
+                
+                HoverHandler {
+                    id: resetButtonHover
+                    cursorShape: Qt.PointingHandCursor
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    onHoveredChanged: resetButton.isHovered = hovered
                 }
             }
         }

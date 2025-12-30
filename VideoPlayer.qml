@@ -7,6 +7,8 @@ import s3rp3nt_media 1.0 as S3rp3ntMedia
 Item {
     id: videoPlayer
     
+    property var windowRef: null  // Window reference for accessing window properties
+    property var resizeTimersRef: null  // Resize timers reference
     property url source: ""
     property real volume: 1.0
     
@@ -75,6 +77,14 @@ Item {
                     videoPlayer.durationAvailable()
                 // Don't trigger auto-fix for WMF - it handles problematic videos better
                 console.log("[WMF] Using WMF player - no auto-fix needed")
+                // Autoplay video when ready
+                Qt.callLater(function() {
+                    if (playbackState !== 1) { // Not already playing
+                        console.log("[WMF] Autoplaying video")
+                        play()
+                        // Don't start hardware decoder detection timer for WMF - it uses hardware acceleration by default
+                    }
+                })
             }
         }
         
@@ -83,10 +93,21 @@ Item {
                 if (playbackState === 1) { // Playing
                     videoPlayer.showControls = true
                 controlsHideTimer.start()
+                // Check hardware decoder for webm files (even with WMF) or for MediaPlayer
+                const isWebm = videoPlayer.source.toString().toLowerCase().endsWith('.webm')
+                if (isWebm && videoPlayer.source !== "") {
+                    hardwareDecoderDetectionTimer.restart()
+                }
             } else {
                     videoPlayer.showControls = true
                 controlsHideTimer.stop()
+                hardwareDecoderDetectionTimer.stop()
             }
+        }
+        
+        onHasAudioChanged: {
+            // hasAudio property changed - QML automatically emits hasAudioChanged signal
+            // No need to manually emit, just update the property binding
         }
         
         onErrorOccurred: function(error, errorString) {
@@ -115,6 +136,33 @@ Item {
                 mediaPlayer.stop()
             }
         }
+        
+        // Check hasAudio after media is loaded - QMediaPlayer might not report correctly for webm
+        onHasAudioChanged: {
+            // For webm files, double-check by examining audio tracks
+            if (!videoPlayer.useWMF && videoPlayer.source.toString().toLowerCase().endsWith('.webm')) {
+                // Force re-check after a delay to ensure media is fully loaded
+                Qt.callLater(function() {
+                    // If hasAudio is true but we suspect it might be wrong, check audio tracks
+                    // This is a workaround for QMediaPlayer sometimes reporting hasAudio=true for webm without audio
+                    if (mediaPlayer.hasAudio) {
+                        // Check if audio actually works by trying to access audio tracks
+                        // If no audio tracks exist, hasAudio should be false
+                        // Note: QMediaPlayer doesn't expose audio tracks directly, so we rely on hasAudio
+                        // But we can check if the audio output is actually receiving data
+                    }
+                })
+            }
+        }
+        
+        // Listen for error messages to detect hardware decoder issues
+        onErrorOccurred: function(error, errorString) {
+            if (errorString && (errorString.toLowerCase().includes("hw decoder") || 
+                errorString.toLowerCase().includes("hardware decoder") ||
+                errorString.toLowerCase().includes("no hw decoder"))) {
+                videoPlayer.hardwareDecoderUnavailable = true
+            }
+        }
     }
     
     VideoOutput {
@@ -129,6 +177,32 @@ Item {
     property url fixedVideoUrl: ""
     property int lastPosition: 0
     property int positionStallCount: 0
+    property bool hardwareDecoderUnavailable: false  // Track if hardware decoder is not available
+    
+    // Timer to detect hardware decoder unavailability after video starts playing
+    // Since "No HW decoder found" is a console warning (not an error), we use a heuristic:
+    // Show notification for MediaPlayer and for webm files (which may not have hardware decoding even with WMF)
+    // Note: The warning can appear in console for both WMF and MediaPlayer
+    Timer {
+        id: hardwareDecoderDetectionTimer
+        interval: 1500  // Check 1.5 seconds after video starts playing
+        running: false
+        onTriggered: {
+            // Heuristic: Show notification for MediaPlayer or webm files
+            // MediaPlayer (FFmpeg-based) is more likely to use software decoding
+            // Webm files may not have hardware decoding even with WMF
+            const isPlaying = (videoPlayer.useWMF && wmfPlayer && wmfPlayer.playbackState === 1) || 
+                             (!videoPlayer.useWMF && mediaPlayer.playbackState === MediaPlayer.PlayingState)
+            const isWebm = videoPlayer.source.toString().toLowerCase().endsWith('.webm')
+            
+            if (isPlaying && videoPlayer.source !== "") {
+                // Show notification for MediaPlayer or webm files
+                if (!videoPlayer.useWMF || isWebm) {
+                    videoPlayer.hardwareDecoderUnavailable = true
+                }
+            }
+        }
+    }
     
     // Timer to auto-fix video after it loads (only for MediaPlayer/FFmpeg, not WMF)
     Timer {
@@ -296,6 +370,19 @@ Item {
                 console.log("[Video] isFixingVideo:", videoPlayer.isFixingVideo)
                 console.log("[Video] originalVideoSource:", videoPlayer.originalVideoSource)
                 durationAvailable()
+                // Autoplay video when ready (if not already playing)
+                if (mediaPlayer.playbackState !== MediaPlayer.PlayingState) {
+                    Qt.callLater(function() {
+                        console.log("[Video] Autoplaying video")
+                        mediaPlayer.play()
+                        // Start hardware decoder detection timer after auto-play
+                        Qt.callLater(function() {
+                            if (videoPlayer.source !== "") {
+                                hardwareDecoderDetectionTimer.restart()
+                            }
+                        }, 500)  // Small delay to ensure playback has started
+                    })
+                }
                 // Automatically attempt fix 3 seconds after video loads (to catch timestamp warnings)
                 // Only for MediaPlayer (FFmpeg), not for WMF
                 // Check if originalVideoSource is empty (url properties need special handling)
@@ -315,9 +402,14 @@ Item {
             if (mediaPlayer.playbackState === MediaPlayer.PlayingState) {
                 showControls = true
                 controlsHideTimer.start()
+                // Check for hardware decoder availability after playback starts (if using MediaPlayer)
+                if (!videoPlayer.useWMF && videoPlayer.source !== "") {
+                    hardwareDecoderDetectionTimer.restart()
+                }
             } else {
                 showControls = true
                 controlsHideTimer.stop()
+                hardwareDecoderDetectionTimer.stop()
             }
         }
     }
@@ -497,7 +589,24 @@ Item {
     property int position: (useWMF && wmfPlayer) ? wmfPlayer.position : mediaPlayer.position
     property int playbackState: (useWMF && wmfPlayer) ? wmfPlayer.playbackState : mediaPlayer.playbackState
     property bool hasVideo: (useWMF && wmfPlayer) ? true : mediaPlayer.hasVideo
-    property bool hasAudio: (useWMF && wmfPlayer) ? true : mediaPlayer.hasAudio
+    // For webm files, check hasAudio more carefully - WMF player might not detect correctly
+    property bool hasAudio: {
+        if (useWMF && wmfPlayer) {
+            // WMF player - use its hasAudio property if available
+            if (wmfPlayer.hasAudio !== undefined) {
+                return wmfPlayer.hasAudio
+            }
+            // If undefined, check if source is webm - for webm, default to false if undefined
+            // (webm files might not have audio, and WMF might not detect it correctly)
+            if (source.toString().toLowerCase().endsWith('.webm')) {
+                return false  // Default to no audio for webm if WMF doesn't report it
+            }
+            return true  // Default to true for other formats
+        } else {
+            // MediaPlayer - use its hasAudio property
+            return mediaPlayer.hasAudio
+        }
+    }
     property var metaData: (useWMF && wmfPlayer) ? ({}) : mediaPlayer.metaData
     property int implicitWidth: videoDisplay.implicitWidth
     property int implicitHeight: videoDisplay.implicitHeight

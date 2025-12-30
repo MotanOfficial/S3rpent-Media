@@ -10,16 +10,29 @@
 #include <QQmlComponent>
 #include <QQuickWindow>
 #include <QPointer>
+#include <QTranslator>
+#include <QLocale>
+#include <QStandardPaths>
+#include <QDir>
+#include <QSettings>
+#include <QCoreApplication>
+#include <QFile>
 #include <optional>
 
 #include "colorutils.h"
 #include "wmfvideoplayer.h"
 #include "lrclibclient.h"
+#include "lyricstranslationclient.h"
 #include "audiovisualizer.h"
 #include "audioequalizer.h"
 #include "customaudioplayer.h"
+#include "discordrpc.h"
 #include "singleinstancemanager.h"
 #include "windowmanager.h"
+#include "windowsmediasession.h"
+#include "coverartclient.h"
+#include "lastfmclient.h"
+#include "windowframehelper.h"
 #include <oclero/qlementine/icons/QlementineIcons.hpp>
 
 // Constants
@@ -51,10 +64,16 @@ namespace {
         // Register types
         qmlRegisterType<WMFVideoPlayer>("s3rp3nt_media", 1, 0, "WMFVideoPlayer");
         qmlRegisterType<LRCLibClient>("s3rp3nt_media", 1, 0, "LRCLibClient");
+        qmlRegisterType<LyricsTranslationClient>("s3rp3nt_media", 1, 0, "LyricsTranslationClient");
         qmlRegisterType<AudioVisualizer>("s3rp3nt_media", 1, 0, "AudioVisualizer");
         qmlRegisterType<AudioEqualizer>("s3rp3nt_media", 1, 0, "AudioEqualizer");
         qmlRegisterType<CustomAudioPlayer>("s3rp3nt_media", 1, 0, "CustomAudioPlayer");
+        qmlRegisterType<DiscordRPC>("s3rp3nt_media", 1, 0, "DiscordRPC");
         qmlRegisterType<SingleInstanceManager>("s3rp3nt_media", 1, 0, "SingleInstanceManager");
+        qmlRegisterType<WindowsMediaSession>("s3rp3nt_media", 1, 0, "WindowsMediaSession");
+        qmlRegisterType<CoverArtClient>("s3rp3nt_media", 1, 0, "CoverArtClient");
+        qmlRegisterType<LastFMClient>("s3rp3nt_media", 1, 0, "LastFMClient");
+        qmlRegisterType<WindowFrameHelper>("s3rp3nt_media", 1, 0, "WindowFrameHelper");
         
         // Register singletons (Qt 6 approach - no .qmldir needed)
         qmlRegisterSingletonInstance("s3rp3nt_media", 1, 0, "ColorUtils", &colorUtils);
@@ -88,16 +107,74 @@ void initApplication(QApplication &app)
     app.setQuitOnLastWindowClosed(false);
 }
 
+// Load translation based on language code
+QTranslator* loadTranslation(QApplication &app, const QString &languageCode)
+{
+    // English is the default, no translation needed
+    if (languageCode == "en" || languageCode.isEmpty()) {
+        return nullptr;
+    }
+    
+    QTranslator *translator = new QTranslator(&app);
+    
+    QString translationFile = QString("s3rp3nt_media_%1").arg(languageCode);
+    
+    // Try to load from resources (qt_add_translations adds them to :/i18n by default)
+    if (translator->load(translationFile, ":/i18n")) {
+        app.installTranslator(translator);
+        qDebug() << "[Translation] Loaded translation from resources:" << translationFile;
+        return translator;
+    }
+    
+    // Try alternative resource path
+    if (translator->load(translationFile, ":/translations")) {
+        app.installTranslator(translator);
+        qDebug() << "[Translation] Loaded translation from resources (alt path):" << translationFile;
+        return translator;
+    }
+    
+    // Try to load from application directory
+    QString appDir = QCoreApplication::applicationDirPath();
+    if (translator->load(translationFile, appDir + "/translations")) {
+        app.installTranslator(translator);
+        qDebug() << "[Translation] Loaded translation from app dir:" << translationFile;
+        return translator;
+    }
+    
+    qWarning() << "[Translation] Failed to load translation:" << translationFile;
+    delete translator;
+    return nullptr;
+}
+
 // Initialize icons
 void initIcons(QApplication &app)
 {
     oclero::qlementine::icons::initializeIconTheme();
     QIcon::setThemeName("qlementine");
     
-    // Try multiple icon paths
+    // Try loading from application directory first (most reliable)
+    QString appDir = QCoreApplication::applicationDirPath();
+    QString iconPath = appDir + "/icon.ico";
+    if (QFile::exists(iconPath)) {
+        QIcon appIcon(iconPath);
+        if (!appIcon.isNull() && !appIcon.availableSizes().isEmpty()) {
+            app.setWindowIcon(appIcon);
+            return;
+        }
+    }
+    iconPath = appDir + "/icon.png";
+    if (QFile::exists(iconPath)) {
+        QIcon appIcon(iconPath);
+        if (!appIcon.isNull() && !appIcon.availableSizes().isEmpty()) {
+            app.setWindowIcon(appIcon);
+            return;
+        }
+    }
+    
+    // Fallback to Qt resources
     for (const QString &iconPath : ICON_PATHS) {
         QIcon appIcon(iconPath);
-        if (!appIcon.isNull()) {
+        if (!appIcon.isNull() && !appIcon.availableSizes().isEmpty()) {
             app.setWindowIcon(appIcon);
             break;
         }
@@ -278,14 +355,27 @@ int main(int argc, char *argv[])
     // Initialize application
     initApplication(app);
     
-    // Initialize icons
+    // Load application language setting
+    QSettings settings;
+    settings.beginGroup("app");
+    QString appLanguage = settings.value("language", "en").toString();
+    settings.endGroup();
+    
+    // Load translation
+    QTranslator *appTranslator = loadTranslation(app, appLanguage);
+    
+    // Create single instance manager and color utils (needed for singleton registration)
+    // Note: This creates the tray icon, but icon may not be set yet
+    SingleInstanceManager instanceManager;
+    
+    // Initialize icons (must be after QApplication is created)
     initIcons(app);
+    
+    // Update tray icon now that app icon is set
+    instanceManager.updateTrayIcon();
     
     // Initialize logging
     initLogging();
-    
-    // Create single instance manager and color utils (needed for singleton registration)
-    SingleInstanceManager instanceManager;
     ColorUtils colorUtils;
     
     // Get file paths from command line (supports multiple files)
@@ -326,6 +416,13 @@ int main(int argc, char *argv[])
     if (debugConsole) {
         windowManager.setDebugConsole(debugConsole);
     }
+    
+    // Create WindowFrameHelper for frameless window support (Windows only)
+#ifdef Q_OS_WIN
+    WindowFrameHelper *frameHelper = new WindowFrameHelper(&app);
+    app.installNativeEventFilter(frameHelper);
+    qDebug() << "[Main] WindowFrameHelper installed as native event filter";
+#endif
     
     // Run diagnostics (only in DEBUG builds)
 #ifdef DEBUG

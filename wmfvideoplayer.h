@@ -27,6 +27,7 @@ class WMFVideoPlayer : public QObject
     Q_PROPERTY(qreal volume READ volume WRITE setVolume NOTIFY volumeChanged)
     Q_PROPERTY(bool seekable READ seekable NOTIFY seekableChanged)
     Q_PROPERTY(QVideoSink* videoSink READ videoSink WRITE setVideoSink NOTIFY videoSinkChanged)
+    Q_PROPERTY(bool hasAudio READ hasAudio NOTIFY hasAudioChanged)
 
 public:
     explicit WMFVideoPlayer(QObject *parent = nullptr);
@@ -41,6 +42,7 @@ public:
     qreal volume() const { return m_volume; }
     void setVolume(qreal volume);
     bool seekable() const { return m_seekable; }
+    bool hasAudio() const { return m_hasAudio; }
 
     QVideoSink* videoSink() const { return m_videoSink; }
     void setVideoSink(QVideoSink *sink);
@@ -58,6 +60,7 @@ signals:
     void volumeChanged();
     void seekableChanged();
     void videoSinkChanged();
+    void hasAudioChanged();
     void errorOccurred(int error, const QString &errorString);
 
 private slots:
@@ -91,6 +94,7 @@ private:
     QByteArray m_audioBuffer;
     QByteArray m_decodedAudioData; // Complete decoded audio track
     bool m_audioDecoded; // Whether audio has been fully decoded
+    bool m_hasAudio; // Whether the video has an audio track
     qint64 m_audioBytesWritten; // How many bytes of decoded audio we've written to QAudioSink
     QTimer *m_audioFeedTimer; // Timer to continuously feed audio to QAudioSink
     bool m_needsSpecialHandling; // Whether video has broken timestamps and needs FFmpeg audio extraction

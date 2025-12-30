@@ -121,6 +121,7 @@ private:
     bool m_formatInitialized;
     qint64 m_totalFrames;  // Track total frames decoded for accurate duration calculation
     qint64 m_seekTargetPosition;  // Target position when seeking (0 = not seeking)
+    PlaybackState m_seekPreserveState;  // Playback state to restore after seeking completes
     bool m_durationCalculated;  // Whether duration has been calculated (preserve it after first calculation)
     qint64 m_bytesWritten;  // Track bytes written to audio device for accurate position tracking
     QElapsedTimer m_playbackStartTime;  // Track when audio actually starts playing
