@@ -62,13 +62,41 @@ Item {
         }
     }
     
-    // ESC key to exit Bad Apple easter egg
+    // F11 key to toggle fullscreen
     Shortcut {
-        sequence: "Escape"
-        enabled: appShortcuts.window && appShortcuts.window.badAppleEffectEnabled
+        sequence: "F11"
+        enabled: appShortcuts.window !== null
         onActivated: {
             if (appShortcuts.window) {
-                appShortcuts.window.stopBadAppleEasterEgg()
+                if (appShortcuts.window.visibility === Window.FullScreen) {
+                    appShortcuts.window.showNormal()
+                } else {
+                    appShortcuts.window.showFullScreen()
+                }
+            }
+        }
+    }
+    
+    // ESC key to exit fullscreen or easter eggs
+    Shortcut {
+        sequence: "Escape"
+        enabled: appShortcuts.window !== null
+        onActivated: {
+            if (appShortcuts.window) {
+                // First priority: exit Undertale fight if active (it uses fullscreen)
+                if (appShortcuts.window.undertaleFightEnabled) {
+                    appShortcuts.window.stopUndertaleFight()
+                    return
+                }
+                // Second priority: exit fullscreen if in fullscreen
+                if (appShortcuts.window.visibility === Window.FullScreen) {
+                    appShortcuts.window.showNormal()
+                    return
+                }
+                // Third priority: exit Bad Apple easter egg if active
+                if (appShortcuts.window.badAppleEffectEnabled) {
+                    appShortcuts.window.stopBadAppleEasterEgg()
+                }
             }
         }
     }

@@ -78,6 +78,36 @@ void WindowFrameHelper::setButtonAreaWidth(int width)
     }
 }
 
+bool WindowFrameHelper::fullscreen() const
+{
+    return m_fullscreen.load(std::memory_order_seq_cst);
+}
+
+void WindowFrameHelper::setFullscreen(bool fullscreen)
+{
+    bool oldValue = m_fullscreen.load(std::memory_order_seq_cst);
+    if (oldValue != fullscreen) {
+        qDebug() << "[WindowFrameHelper] fullscreen changed from" << oldValue << "to" << fullscreen;
+        m_fullscreen.store(fullscreen, std::memory_order_seq_cst);
+        
+        // Update DWM frame extension based on fullscreen/maximized state
+        // In fullscreen OR maximized, remove frame extension to prevent white border
+        // In windowed mode, extend frame for proper window snapping
+#ifdef Q_OS_WIN
+        if (m_window && m_window->winId()) {
+            void *hwnd = reinterpret_cast<void*>(m_window->winId());
+            if (fullscreen) {
+                removeFrameExtension(hwnd);
+            } else {
+                extendFrameIntoClientArea(hwnd);
+            }
+        }
+#endif
+        
+        emit fullscreenChanged();
+    }
+}
+
 void WindowFrameHelper::setupFramelessWindow(QQuickWindow *window)
 {
     if (!window) {
@@ -139,6 +169,33 @@ void WindowFrameHelper::startSystemMove()
 #endif
 }
 
+void WindowFrameHelper::toggleMaximize()
+{
+#ifdef Q_OS_WIN
+    if (!m_window || !m_window->winId()) {
+        qWarning() << "[WindowFrameHelper] toggleMaximize: window or window ID is null";
+        return;
+    }
+    
+    HWND hwnd = reinterpret_cast<HWND>(m_window->winId());
+    
+    // Check if window is currently maximized using native Windows API
+    bool isMaximized = IsZoomed(hwnd);
+    
+    if (isMaximized) {
+        // Restore the window using native Windows API
+        SendMessage(hwnd, WM_SYSCOMMAND, SC_RESTORE, 0);
+        qDebug() << "[WindowFrameHelper] Restored window using native Windows API";
+    } else {
+        // Maximize the window using native Windows API
+        SendMessage(hwnd, WM_SYSCOMMAND, SC_MAXIMIZE, 0);
+        qDebug() << "[WindowFrameHelper] Maximized window using native Windows API";
+    }
+#else
+    qWarning() << "[WindowFrameHelper] toggleMaximize only supported on Windows";
+#endif
+}
+
 bool WindowFrameHelper::nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result)
 {
 #ifdef Q_OS_WIN
@@ -185,8 +242,52 @@ void WindowFrameHelper::extendFrameIntoClientArea(void *hwnd)
     
     if (SUCCEEDED(hr)) {
         qDebug() << "[WindowFrameHelper] DWM frame extended successfully - snapping and animations enabled";
+        
+        // CRITICAL: Restore WS_EX_LAYERED style for transparent window (needed for DWM frame extension)
+        // When DWM frame extension is active, the window needs to be transparent/layered
+        LONG exStyle = GetWindowLong(hwndWin, GWL_EXSTYLE);
+        if (!(exStyle & WS_EX_LAYERED)) {
+            exStyle |= WS_EX_LAYERED;
+            SetWindowLong(hwndWin, GWL_EXSTYLE, exStyle);
+            // Set window to be fully opaque (alpha = 255) but still layered for DWM
+            SetLayeredWindowAttributes(hwndWin, 0, 255, LWA_ALPHA);
+            // Force window update after style change
+            SetWindowPos(hwndWin, nullptr, 0, 0, 0, 0,
+                        SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            qDebug() << "[WindowFrameHelper] Restored WS_EX_LAYERED for DWM frame extension";
+        }
     } else {
         qWarning() << "[WindowFrameHelper] Failed to extend DWM frame:" << hr;
+    }
+}
+
+void WindowFrameHelper::removeFrameExtension(void *hwnd)
+{
+    HWND hwndWin = static_cast<HWND>(hwnd);
+    
+    // Remove DWM frame extension by setting all margins to 0
+    // This prevents white borders in fullscreen/maximized mode
+    MARGINS margins = { 0, 0, 0, 0 };
+    HRESULT hr = DwmExtendFrameIntoClientArea(hwndWin, &margins);
+    
+    if (SUCCEEDED(hr)) {
+        qDebug() << "[WindowFrameHelper] DWM frame extension removed - fullscreen/maximized mode";
+        
+        // CRITICAL: Make window opaque when DWM frame extension is removed
+        // When DWM frame extension is removed, the window can become transparent
+        // We need to ensure the window is fully opaque (alpha = 255)
+        LONG exStyle = GetWindowLong(hwndWin, GWL_EXSTYLE);
+        if (exStyle & WS_EX_LAYERED) {
+            // Window is layered - set it to fully opaque
+            SetLayeredWindowAttributes(hwndWin, 0, 255, LWA_ALPHA);
+            qDebug() << "[WindowFrameHelper] Set layered window to fully opaque (alpha=255)";
+        } else {
+            // Window is not layered - ensure it stays opaque
+            // The window color in QML should handle this, but we ensure it here
+            qDebug() << "[WindowFrameHelper] Window is not layered - should be opaque";
+        }
+    } else {
+        qWarning() << "[WindowFrameHelper] Failed to remove DWM frame extension:" << hr;
     }
 }
 
@@ -218,15 +319,37 @@ qintptr WindowFrameHelper::handleNCHitTest(void *msg, const QPoint &globalPos)
     MSG *windowsMsg = static_cast<MSG *>(msg);
     HWND hwnd = windowsMsg->hwnd;
     
-    // Get window border size
-    const LONG border = GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+    // If window is maximized or fullscreen, disable all resize borders
+    // Return HTCLIENT for resize areas to prevent resizing when maximized/fullscreen
+    bool isMaximized = IsZoomed(hwnd);
+    bool isFullscreen = m_fullscreen.load(std::memory_order_seq_cst);
     
     // Get window rectangle
     RECT rect;
     GetWindowRect(hwnd, &rect);
     
+    // Also check if window size matches screen size (indicates fullscreen)
+    // This is a fallback check in case the property hasn't been set yet
+    if (!isFullscreen) {
+        int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+        int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+        int windowWidth = rect.right - rect.left;
+        int windowHeight = rect.bottom - rect.top;
+        
+        // If window size matches screen size (within 5px tolerance), treat as fullscreen
+        int widthDiff = (windowWidth > screenWidth) ? (windowWidth - screenWidth) : (screenWidth - windowWidth);
+        int heightDiff = (windowHeight > screenHeight) ? (windowHeight - screenHeight) : (screenHeight - windowHeight);
+        
+        if (widthDiff <= 5 && heightDiff <= 5) {
+            isFullscreen = true;
+        }
+    }
+    
+    // Get window border size
+    const LONG border = GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+    
     // Handle maximized window padding (Windows adds padding when maximized)
-    if (IsZoomed(hwnd)) {
+    if (isMaximized) {
         const int padding = GetSystemMetrics(SM_CXPADDEDBORDER);
         rect.top += padding;
         rect.left += padding;
@@ -238,36 +361,39 @@ qintptr WindowFrameHelper::handleNCHitTest(void *msg, const QPoint &globalPos)
     const LONG y = globalPos.y();
     
     // --- Resize borders ---
-    // Left edge
-    if (x < rect.left + border) {
+    // Disable resize borders when maximized or fullscreen - return HTCLIENT instead
+    if (!isMaximized && !isFullscreen) {
+        // Left edge
+        if (x < rect.left + border) {
+            if (y < rect.top + border) {
+                return HTTOPLEFT;
+            }
+            if (y > rect.bottom - border) {
+                return HTBOTTOMLEFT;
+            }
+            return HTLEFT;
+        }
+        
+        // Right edge
+        if (x > rect.right - border) {
+            if (y < rect.top + border) {
+                return HTTOPRIGHT;
+            }
+            if (y > rect.bottom - border) {
+                return HTBOTTOMRIGHT;
+            }
+            return HTRIGHT;
+        }
+        
+        // Top edge
         if (y < rect.top + border) {
-            return HTTOPLEFT;
+            return HTTOP;
         }
+        
+        // Bottom edge
         if (y > rect.bottom - border) {
-            return HTBOTTOMLEFT;
+            return HTBOTTOM;
         }
-        return HTLEFT;
-    }
-    
-    // Right edge
-    if (x > rect.right - border) {
-        if (y < rect.top + border) {
-            return HTTOPRIGHT;
-        }
-        if (y > rect.bottom - border) {
-            return HTBOTTOMRIGHT;
-        }
-        return HTRIGHT;
-    }
-    
-    // Top edge
-    if (y < rect.top + border) {
-        return HTTOP;
-    }
-    
-    // Bottom edge
-    if (y > rect.bottom - border) {
-        return HTBOTTOM;
     }
     
     // NEW ARCHITECTURE: Return HTCLIENT everywhere (except resize borders)

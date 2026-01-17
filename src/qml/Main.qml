@@ -30,7 +30,7 @@ ApplicationWindow {
     visible: true
     title: qsTr("s3rp3nt media · Media Viewer")
     flags: Qt.Window | Qt.FramelessWindowHint
-    color: Qt.transparent  // Required for DWM frame extension
+    color: "#000000"  // Black background to prevent white border in maximized/fullscreen (was Qt.transparent for DWM)
     background: WindowBackground {
         accentColor: window.accentColor
         dynamicColoringEnabled: window.dynamicColoringEnabled
@@ -132,6 +132,12 @@ ApplicationWindow {
         property alias lastFMApiKey: window.lastFMApiKey
     }
     
+    Settings {
+        id: debugSettings
+        category: "debug"
+        property alias consoleEnabled: window.debugConsoleEnabled
+    }
+    
     property url audioCoverArt: ""
     property var audioFormatInfo: ({ sampleRate: 0, bitrate: 0 })
     property int lastAudioDuration: 0  // Track last duration to prevent infinite loops
@@ -167,6 +173,7 @@ ApplicationWindow {
     property bool ambientGradientEnabled: false  // Spotify-style ambient animated gradient
     property bool snowEffectEnabled: false  // Hybrid snow effect (shader + particles)
     property bool badAppleEffectEnabled: false  // Bad Apple!! shader renderer
+    property bool undertaleFightEnabled: false  // Undertale fight easter egg
     property bool imageInterpolationMode: true  // Image interpolation: true = smooth/antialiased, false = nearest neighbor
     property bool dynamicResolutionEnabled: true  // Dynamic resolution adjustment based on zoom level
     property bool matchMediaAspectRatio: false  // Match window aspect ratio to loaded media
@@ -179,6 +186,7 @@ ApplicationWindow {
     property bool discordRPCEnabled: true  // Enable Discord Rich Presence
     property string coverArtSource: "coverartarchive"  // "coverartarchive" or "lastfm"
     property string lastFMApiKey: ""  // Last.fm API key (optional)
+    property bool debugConsoleEnabled: false  // Enable debug console (disabled by default)
     
     // Image source for backdrop blur (cover art for audio, currentImage for images)
     // For audio: prefer cover art, fallback to currentImage if cover art not available yet
@@ -665,10 +673,16 @@ ApplicationWindow {
         }
         onMinimizeClicked: window.showMinimized()
         onMaximizeClicked: {
+            // Use native Windows maximize/restore via WindowFrameHelper
+            if (frameHelper) {
+                frameHelper.toggleMaximize()
+            } else {
+                // Fallback to Qt's maximize if frameHelper not available
                             if (window.visibility === Window.Maximized)
                                 window.showNormal()
                             else
                                 window.showMaximized()
+            }
                         }
         onCloseClicked: {
             // Always trigger close event - let onClosing handle the logic
@@ -748,6 +762,15 @@ ApplicationWindow {
         openDialog: openDialog
     }
     
+    // Undertale fight easter egg overlay
+    UndertaleFight {
+        id: undertaleFight
+        enabled: window.undertaleFightEnabled
+        appWindow: window
+        titleBar: customTitleBar
+        z: 2000000  // Above hotZone (which is 1000000) to block all input
+    }
+    
     // Global MouseArea to detect cursor position and drive titlebar hiding
     // This works because it's in the content area, below the titlebar
     // Windows drag has already ended when cursor reaches here, so no conflict with HTCAPTION
@@ -799,7 +822,8 @@ ApplicationWindow {
         z: 1000000  // Always on top of everything
         // CRITICAL: Hot zone must be disabled when titlebar is visible to prevent overlap deadlock
         // The hot zone should ONLY be active when the titlebar is hidden
-        visible: window.autoHideTitleBar && !customTitleBar.titleBarVisible
+        // Also disable when Undertale fight is active
+        visible: window.autoHideTitleBar && !customTitleBar.titleBarVisible && !window.undertaleFightEnabled
         enabled: visible  // Must be enabled to receive events
         
         // CRITICAL: Drive C++ hotZoneActive property directly from QML visibility
@@ -897,6 +921,16 @@ ApplicationWindow {
         wasHiddenWithMedia = WindowLifecycleUtils.handleWindowVisibleChanged(visible, wasHiddenWithMedia, unloadMedia)
     }
     
+    // Track visibility changes to update fullscreen/maximized state in WindowFrameHelper
+    onVisibilityChanged: {
+        if (frameHelper) {
+            const isFullscreen = (window.visibility === Window.FullScreen)
+            const isMaximized = (window.visibility === Window.Maximized)
+            // Remove DWM frame extension for both fullscreen AND maximized to prevent white border
+            frameHelper.fullscreen = (isFullscreen || isMaximized)
+        }
+    }
+    
     // When secondary window is about to be destroyed, ensure everything is cleaned up
     Component.onDestruction: {
         WindowLifecycleUtils.handleComponentDestruction(isMainWindow, window, unloadAllViewers)
@@ -939,6 +973,36 @@ ApplicationWindow {
         // Disable Bad Apple effect
         badAppleEffectEnabled = false
         logToDebugConsole("[BadApple] Easter egg stopped!", "info")
+    }
+    
+    // Function to start Undertale fight easter egg
+    function startUndertaleFight() {
+        // Close settings page
+        showingSettings = false
+        
+        // Clear current media to show blank page
+        currentImage = ""
+        unloadMedia()
+        
+        // Enable Undertale fight
+        undertaleFightEnabled = true
+        
+        // Start the fight (this will make it fullscreen)
+        if (undertaleFight && typeof undertaleFight.startFight === "function") {
+            undertaleFight.startFight()
+        }
+        logToDebugConsole("[UndertaleFight] Easter egg activated!", "info")
+    }
+    
+    // Function to stop Undertale fight easter egg
+    function stopUndertaleFight() {
+        // Stop the fight
+        if (undertaleFight && typeof undertaleFight.stopFight === "function") {
+            undertaleFight.stopFight()
+        }
+        // Disable Undertale fight
+        undertaleFightEnabled = false
+        logToDebugConsole("[UndertaleFight] Easter egg stopped!", "info")
     }
 
     // Window initialization manager - handles Component.onCompleted logic

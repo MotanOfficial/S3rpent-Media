@@ -142,9 +142,14 @@ Item {
             id: dragHandler
             acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
             target: null  // We don't move QML items, we move the window
+            enabled: window && window.visibility !== Window.FullScreen  // Disable dragging in fullscreen
             
             onActiveChanged: {
                 if (active && frameHelper) {
+                    // Don't allow dragging when in fullscreen mode (double-check)
+                    if (window && window.visibility === Window.FullScreen) {
+                        return
+                    }
                     // User started dragging - tell Windows to take over
                     frameHelper.startSystemMove()
                 }

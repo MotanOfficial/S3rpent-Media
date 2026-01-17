@@ -150,7 +150,6 @@ Column {
             text: qsTr("No media loaded")
             font.pixelSize: 32
             font.weight: Font.Bold
-            font.family: "Segoe UI"
             color: Qt.rgba(1, 1, 1, 0.95)
             anchors.horizontalCenter: parent.horizontalCenter
             horizontalAlignment: Text.AlignHCenter
@@ -160,7 +159,6 @@ Column {
         Text {
             text: qsTr("Drag & drop a file here or click the button below to browse")
             font.pixelSize: 15
-            font.family: "Segoe UI"
             color: Qt.rgba(1, 1, 1, 0.6)
             anchors.horizontalCenter: parent.horizontalCenter
             horizontalAlignment: Text.AlignHCenter
@@ -186,7 +184,6 @@ Column {
         Text {
             text: qsTr("or")
             font.pixelSize: 13
-            font.family: "Segoe UI"
             color: Qt.rgba(1, 1, 1, 0.5)
             anchors.verticalCenter: parent.verticalCenter
         }
@@ -278,7 +275,6 @@ Column {
             Text {
                 text: qsTr("Browse files")
                 font.pixelSize: 15
-                font.family: "Segoe UI"
                 font.weight: Font.Medium
                 color: Qt.rgba(1, 1, 1, 0.95)
                 anchors.verticalCenter: parent.verticalCenter
@@ -330,7 +326,6 @@ Column {
     Text {
         text: qsTr("Images • Videos • Audio • Documents")
         font.pixelSize: 12
-        font.family: "Segoe UI"
         color: Qt.rgba(1, 1, 1, 0.35)
         anchors.horizontalCenter: parent.horizontalCenter
         topPadding: 16

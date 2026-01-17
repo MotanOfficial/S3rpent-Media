@@ -9,6 +9,9 @@
 #include <QQuickStyle>
 #include <QQmlComponent>
 #include <QQuickWindow>
+#include <QSGRendererInterface>
+#include <QSurfaceFormat>
+#include <QOpenGLContext>
 #include <QPointer>
 #include <QTranslator>
 #include <QLocale>
@@ -17,10 +20,23 @@
 #include <QSettings>
 #include <QCoreApplication>
 #include <QFile>
+#include <QFontDatabase>
+#include <QFont>
 #include <optional>
+#include <QtGui/rhi/qrhi.h>
 
 #include "colorutils.h"
 #include "wmfvideoplayer.h"
+#ifdef HAS_LIBMPV
+#include "mpvvideoplayer.h"
+// TEMPORARILY DISABLED: #include "mpvqmlitem.h"
+#endif
+#ifdef HAS_LIBVLC
+#include "vlcvideoplayer.h"
+#include "vlcvideoitem.h"
+#endif
+#include "ffmpegvideoplayer.h"
+#include "ffmpegvideorenderer.h"
 #include "lrclibclient.h"
 #include "lyricstranslationclient.h"
 #include "audiovisualizer.h"
@@ -33,6 +49,9 @@
 #include "coverartclient.h"
 #include "lastfmclient.h"
 #include "windowframehelper.h"
+#include "subtitleformatter.h"
+#include "mediaplayerwrapper.h"
+#include "embeddedsubtitleextractor.h"
 #include <oclero/qlementine/icons/QlementineIcons.hpp>
 
 // Constants
@@ -63,6 +82,29 @@ namespace {
     {
         // Register types
         qmlRegisterType<WMFVideoPlayer>("s3rp3nt_media", 1, 0, "WMFVideoPlayer");
+#ifdef HAS_LIBMPV
+        if (MPVVideoPlayer::isAvailable()) {
+            qmlRegisterType<MPVVideoPlayer>("s3rp3nt_media", 1, 0, "MPVVideoPlayer");
+            // TEMPORARILY DISABLED: Register mpv widget container for QML embedding (mpc-qt style)
+            // This uses QOpenGLWidget internally, which is the ONLY approach that works in Qt 6
+            // qmlRegisterType<MPVQmlItem>("s3rp3nt_media", 1, 0, "MPVVideoWidget");
+            // QQuickFramebufferObject approach (minimal, clean implementation following strict rules)
+            qmlRegisterType<MPVVideoItem>("s3rp3nt_media", 1, 0, "MPVVideoItem");
+        }
+        // Register D3D11-based mpv renderer
+        /*
+        if (MPVVideoPlayerD3D11::isAvailable()) {
+            qmlRegisterType<MPVVideoPlayerD3D11>("s3rp3nt_media", 1, 0, "MPVVideoPlayerD3D11");
+            qmlRegisterType<MPVVideoItemD3D11>("s3rp3nt_media", 1, 0, "MPVVideoItemD3D11");
+        }
+        */
+#endif
+#ifdef HAS_LIBVLC
+        qmlRegisterType<VLCVideoPlayer>("s3rp3nt_media", 1, 0, "VLCVideoPlayer");
+        qmlRegisterType<VLCVideoItem>("s3rp3nt_media", 1, 0, "VLCVideoItem");
+#endif
+        qmlRegisterType<FFmpegVideoPlayer>("s3rp3nt_media", 1, 0, "FFmpegVideoPlayer");
+        qmlRegisterType<FFmpegVideoRenderer>("s3rp3nt_media", 1, 0, "FFmpegVideoRenderer");
         qmlRegisterType<LRCLibClient>("s3rp3nt_media", 1, 0, "LRCLibClient");
         qmlRegisterType<LyricsTranslationClient>("s3rp3nt_media", 1, 0, "LyricsTranslationClient");
         qmlRegisterType<AudioVisualizer>("s3rp3nt_media", 1, 0, "AudioVisualizer");
@@ -74,6 +116,9 @@ namespace {
         qmlRegisterType<CoverArtClient>("s3rp3nt_media", 1, 0, "CoverArtClient");
         qmlRegisterType<LastFMClient>("s3rp3nt_media", 1, 0, "LastFMClient");
         qmlRegisterType<WindowFrameHelper>("s3rp3nt_media", 1, 0, "WindowFrameHelper");
+        qmlRegisterType<SubtitleFormatter>("s3rp3nt_media", 1, 0, "SubtitleFormatter");
+        qmlRegisterType<MediaPlayerWrapper>("s3rp3nt_media", 1, 0, "MediaPlayerWrapper");
+        qmlRegisterType<EmbeddedSubtitleExtractor>("s3rp3nt_media", 1, 0, "EmbeddedSubtitleExtractor");
         
         // Register singletons (Qt 6 approach - no .qmldir needed)
         qmlRegisterSingletonInstance("s3rp3nt_media", 1, 0, "ColorUtils", &colorUtils);
@@ -180,6 +225,100 @@ void initIcons(QApplication &app)
         }
     }
 }
+
+// Initialize fonts - load custom fonts from resources
+void initFonts(QApplication &app)
+{
+    QFontDatabase fontDb;
+    
+    // List of font files to load
+    // Note: qt_add_resources creates aliases with full path, so use resources/fonts/ prefix
+    QStringList fontFiles = {
+        ":/fonts/resources/fonts/goodly-regular.otf",
+        ":/fonts/resources/fonts/goodly-bold.otf",
+        ":/fonts/resources/fonts/goodly-semibold.otf",
+        ":/fonts/resources/fonts/goodly-medium.otf",
+        ":/fonts/resources/fonts/goodly-light.otf",
+        ":/fonts/resources/fonts/goodly-extralight.otf",
+        ":/fonts/resources/fonts/ut-hp-font.otf",
+        ":/fonts/resources/fonts/DTM-Mono.otf",
+        ":/fonts/resources/fonts/DTM-Sans.otf",
+        ":/fonts/resources/fonts/Mars_Needs_Cunnilingus.ttf"
+    };
+    
+    QStringList loadedFontFamilies;
+    
+    // Load each font file - try resources first, then file system
+    for (const QString &fontPath : fontFiles) {
+        int fontId = -1;
+        
+        // Try loading from resources first
+        fontId = fontDb.addApplicationFont(fontPath);
+        
+        // If that fails, try loading from file system (for development)
+        if (fontId == -1) {
+            QString appDir = QCoreApplication::applicationDirPath();
+            QString fileName = QFileInfo(fontPath).fileName();
+            QString fileSystemPath = appDir + "/" + fileName;
+            
+            // Also try in resources/fonts relative to app dir
+            if (!QFile::exists(fileSystemPath)) {
+                fileSystemPath = appDir + "/resources/fonts/" + fileName;
+            }
+            
+            // Also try in source directory (for development)
+            if (!QFile::exists(fileSystemPath)) {
+                QString sourcePath = QCoreApplication::applicationDirPath() + "/../../resources/fonts/" + fileName;
+                if (QFile::exists(sourcePath)) {
+                    fileSystemPath = sourcePath;
+                }
+            }
+            
+            if (QFile::exists(fileSystemPath)) {
+                fontId = fontDb.addApplicationFont(fileSystemPath);
+                if (fontId != -1) {
+                    qDebug() << "[Fonts] Loaded font from file system:" << fileSystemPath;
+                }
+            }
+        }
+        
+        if (fontId != -1) {
+            QStringList fontFamilies = fontDb.applicationFontFamilies(fontId);
+            if (!fontFamilies.isEmpty()) {
+                loadedFontFamilies.append(fontFamilies);
+                qDebug() << "[Fonts] Loaded font:" << fontFamilies.first() << "from" << fontPath;
+            } else {
+                qWarning() << "[Fonts] Failed to get font family from:" << fontPath;
+            }
+        } else {
+            qWarning() << "[Fonts] Failed to load font from:" << fontPath;
+        }
+    }
+    
+    // Set Goodly as the default application font (use regular weight)
+    if (!loadedFontFamilies.isEmpty()) {
+        // Find "Goodly" family (should be the same for all weights)
+        QString goodlyFamily;
+        for (const QString &family : loadedFontFamilies) {
+            if (family.contains("Goodly", Qt::CaseInsensitive)) {
+                goodlyFamily = family;
+                break;
+            }
+        }
+        
+        if (!goodlyFamily.isEmpty()) {
+            QFont defaultFont(goodlyFamily);
+            defaultFont.setStyleHint(QFont::SansSerif);
+            app.setFont(defaultFont);
+            qDebug() << "[Fonts] Set default application font to:" << goodlyFamily;
+        } else {
+            qWarning() << "[Fonts] Could not find Goodly font family in loaded fonts";
+        }
+    } else {
+        qWarning() << "[Fonts] No fonts were loaded successfully";
+    }
+}
+
 
 // Initialize logging filters
 void initLogging()
@@ -346,17 +485,72 @@ void connectInstanceSignals(SingleInstanceManager &instanceManager,
 
 int main(int argc, char *argv[])
 {
+    // CRITICAL: We need to read settings to determine renderer mode, but QSettings needs
+    // the organization/application name to be set first. However, we need to set the
+    // graphics API before QApplication is created. So we:
+    // 1. Set organization/application name manually for QSettings
+    // 2. Read the setting
+    // 3. Set graphics API based on setting
+    // 4. Create QApplication
+    // 5. Call initApplication() (which will set the same org/app name, but that's fine)
+    
+    // Set organization/application name for QSettings (must be before reading settings)
+    QCoreApplication::setOrganizationName("s3rp3nt");
+    QCoreApplication::setOrganizationDomain("s3rp3nt.media");
+    QCoreApplication::setApplicationName("s3rp3nt_media");
+    
+    // Check settings to determine which renderer mode to use
+    QSettings settings;
+    settings.beginGroup("video");
+    QString mpvRendererMode = settings.value("mpvRendererMode", "opengl").toString();
+    qDebug() << "[Main] Reading mpvRendererMode from settings:" << mpvRendererMode;
+    qDebug() << "[Main] All video settings keys:" << settings.allKeys();
+    settings.endGroup();
+    
+    // Check if debug console is enabled
+    settings.beginGroup("debug");
+    bool debugConsoleEnabled = settings.value("consoleEnabled", false).toBool();
+    settings.endGroup();
+    qDebug() << "[Main] Debug console enabled:" << debugConsoleEnabled;
+    
+    // Only force OpenGL if OpenGL renderer mode is selected
+    // D3D11 mode will use Qt's default backend selection (D3D11 on Windows)
+    if (mpvRendererMode == "opengl") {
+        // Use OpenGL backend for mpv OpenGL renderer (official API, works on all platforms)
+        // mpv's OpenGL renderer is the official, stable API
+        // Qt 6 will use ANGLE on Windows (OpenGL ES via D3D11) for compatibility
+        
+        // 1. Force OpenGL backend (REQUIRED for mpv OpenGL renderer)
+        qputenv("QSG_RHI_BACKEND", "opengl");
+        
+        // 2. Set Qt Quick to use OpenGL (mpv requires OpenGL context)
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+        
+        qDebug() << "[Main] OpenGL renderer mode selected - forcing OpenGL backend";
+    } else {
+        // D3D11 mode - let Qt use default backend (D3D11 on Windows)
+        // Don't set QSG_RHI_BACKEND - let Qt use its default (D3D11 on Windows)
+        qDebug() << "[Main] D3D11 renderer mode selected - using default Qt backend (D3D11 on Windows)";
+    }
+    
     // Set style before creating QApplication (Qt recommendation)
     // Note: High DPI scaling is automatically enabled in Qt 6.10.1+
     QQuickStyle::setStyle("Basic");
     
     QApplication app(argc, argv);
     
-    // Initialize application
+    // Initialize application (sets same org/app name, which is fine - just ensures consistency)
     initApplication(app);
     
-    // Load application language setting
-    QSettings settings;
+    // Verify desktop OpenGL backend is being used (critical diagnostic)
+    // Note: Can't check RHI before window is shown, so we'll verify later
+    if (mpvRendererMode == "opengl") {
+        qDebug() << "[RHI] Desktop OpenGL backend configured for mpv OpenGL renderer (NOT ANGLE/OpenGLES2)";
+    } else {
+        qDebug() << "[RHI] D3D11 backend will be used (Qt default on Windows)";
+    }
+    
+    // Load application language setting (reuse settings object from above)
     settings.beginGroup("app");
     QString appLanguage = settings.value("language", "en").toString();
     settings.endGroup();
@@ -371,11 +565,15 @@ int main(int argc, char *argv[])
     // Initialize icons (must be after QApplication is created)
     initIcons(app);
     
+    // Initialize fonts (must be after QApplication is created)
+    initFonts(app);
+    
     // Update tray icon now that app icon is set
     instanceManager.updateTrayIcon();
     
     // Initialize logging
     initLogging();
+    
     ColorUtils colorUtils;
     
     // Get file paths from command line (supports multiple files)
@@ -405,8 +603,31 @@ int main(int argc, char *argv[])
         return -1;
     }
     
-    // Create debug console
-    QObject *debugConsole = createDebugConsole(engine, rootObject);
+    // Verify RHI backend after window is created
+    // Note: QRhi::OpenGLES2 is used for both desktop OpenGL and OpenGL ES
+    // The actual GL context type is determined by QSG_RHI_BACKEND and setGraphicsApi()
+    QQuickWindow *window = qobject_cast<QQuickWindow*>(rootObject);
+    if (window) {
+        QRhi *rhi = window->rhi();
+        if (rhi) {
+            qDebug() << "[RHI] Backend:" << rhi->backend() << "(OpenGLES2 enum used for both desktop GL and ES)";
+            if (rhi->backend() != QRhi::OpenGLES2) {
+                qWarning() << "[RHI] WARNING: Backend is not OpenGLES2 - mpv OpenGL renderer requires OpenGL backend!";
+            } else {
+                qDebug() << "[RHI] ✓ OpenGL backend active (check GL logs to verify desktop GL vs ANGLE)";
+            }
+        } else {
+            qWarning() << "[RHI] No RHI available yet (window may not be shown)";
+        }
+    }
+    
+    // Create debug console only if enabled in settings
+    QObject *debugConsole = nullptr;
+    if (debugConsoleEnabled) {
+        debugConsole = createDebugConsole(engine, rootObject);
+    } else {
+        qDebug() << "[Main] Debug console is disabled in settings - skipping creation";
+    }
     
     // Create WindowManager (parented to app for automatic cleanup)
     WindowManager windowManager(&app);

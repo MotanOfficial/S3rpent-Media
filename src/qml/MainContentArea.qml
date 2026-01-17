@@ -171,6 +171,7 @@ Item {
         discordRPCEnabled: appWindow.discordRPCEnabled
         coverArtSource: appWindow.coverArtSource
         lastFMApiKey: appWindow.lastFMApiKey
+        debugConsoleEnabled: appWindow.debugConsoleEnabled
         
         onBackClicked: appWindow.showingSettings = false
         onDynamicColoringToggled: function(enabled) {
@@ -219,6 +220,12 @@ Item {
                 appWindow.startBadAppleEasterEgg()
                 // Show ESC to exit notification
                 badAppleEscNotification.show()
+            }
+        }
+        onUndertaleEasterEggClicked: {
+            // Start Undertale fight easter egg
+            if (appWindow.startUndertaleFight) {
+                appWindow.startUndertaleFight()
             }
         }
         onLyricsTranslationToggled: function(enabled) {
@@ -278,6 +285,10 @@ Item {
             if (pageStack.audioPlayer) {
                 pageStack.audioPlayer.lastFMApiKey = apiKey
             }
+        }
+        onDebugConsoleToggled: function(enabled) {
+            appWindow.debugConsoleEnabled = enabled
+            console.log("[Settings] Debug console " + (enabled ? "ENABLED" : "DISABLED") + " - restart required")
         }
     }
     
@@ -343,7 +354,6 @@ Item {
             Text {
                 text: "Press ESC to exit"
                 font.pixelSize: 13
-                font.family: "Segoe UI"
                 font.weight: Font.Medium
                 color: "#ffffff"
             }

@@ -56,3 +56,9 @@ compile_commands.json
 build
 installer
 dist
+
+ffmpeg
+libvlc
+mpc-qt-master
+examples
+applogs.txt

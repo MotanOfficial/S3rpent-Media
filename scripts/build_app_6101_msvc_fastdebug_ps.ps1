@@ -223,7 +223,8 @@ if (-not (Test-Path "$BUILD_DIR\CMakeCache.txt")) {
         "-A", "x64",
         "-T", $toolset,
         "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
-        "-DCMAKE_PREFIX_PATH=C:/Qt/6.10.1/msvc2022_64"
+        "-DCMAKE_PREFIX_PATH=C:/Qt/6.10.1/msvc2022_64",
+        "-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
     )
     & $CMAKE_CMD $cmakeArgs
     if ($LASTEXITCODE -ne 0) {

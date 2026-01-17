@@ -151,7 +151,7 @@ Item {
                             anchors.centerIn: parent
                             width: 18
                             height: 18
-                            source: playbackState === MediaPlayer.PlayingState
+                            source: (playbackState === MediaPlayer.PlayingState || playbackState === 1)
                                    ? "qrc:/qlementine/icons/16/media/pause.svg"
                                    : "qrc:/qlementine/icons/16/media/play.svg"
                             sourceSize: Qt.size(18, 18)
@@ -169,7 +169,7 @@ Item {
                             acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                             acceptedButtons: Qt.LeftButton
                             
-                            onTapped: playbackState === MediaPlayer.PlayingState
+                            onTapped: (playbackState === MediaPlayer.PlayingState || playbackState === 1)
                                        ? pauseClicked()
                                        : playClicked()
                             onPressedChanged: playPauseButton.isPressed = pressed
@@ -435,7 +435,6 @@ Item {
                             Layout.preferredWidth: 35
                             color: iconColor
                             font.pixelSize: 12
-                            font.family: "Segoe UI"
                             font.weight: Font.Medium
                             horizontalAlignment: Text.AlignRight
                             text: formatTime(position)
@@ -504,7 +503,6 @@ Item {
                             Layout.preferredWidth: 35
                             color: iconColor
                             font.pixelSize: 12
-                            font.family: "Segoe UI"
                             font.weight: Font.Medium
                             horizontalAlignment: Text.AlignLeft
                             text: formatTime(duration)
@@ -751,7 +749,6 @@ Item {
                                     text: "Pitch: " + (pitch * 100).toFixed(0) + "%"
                                     color: iconColor
                                     font.pixelSize: 12
-                                    font.family: "Segoe UI"
                                     font.weight: Font.Medium
                                     opacity: 0.9
                                 }
@@ -837,7 +834,6 @@ Item {
                                     text: "Tempo: " + (tempo * 100).toFixed(0) + "%"
                                     color: iconColor
                                     font.pixelSize: 12
-                                    font.family: "Segoe UI"
                                     font.weight: Font.Medium
                                     opacity: 0.9
                                 }
@@ -942,7 +938,6 @@ Item {
                                     text: "Equalizer"
                                     color: iconColor
                                     font.pixelSize: 12
-                                    font.family: "Segoe UI"
                                     font.weight: Font.Medium
                                     opacity: 0.9
                                 }
@@ -980,44 +975,82 @@ Item {
         }
     }
     
-    // EQ Popup (centered on screen)
+    // EQ Popup (centered on screen) - styled like MetadataPopup
     Popup {
         id: eqPopup
-        parent: audioControls.parent
-        anchors.centerIn: parent
-        width: 600
-        height: 400
+        // Find the root window/item for proper sizing and centering
+        property var rootWindow: {
+            var item = audioControls.parent
+            while (item && item.parent) {
+                item = item.parent
+            }
+            return item
+        }
+        
+        // Set parent to root window for proper centering
+        parent: rootWindow
+        
+        width: Math.min(600, (rootWindow ? rootWindow.width - 80 : 600))
+        height: Math.min(450, (rootWindow ? rootWindow.height - 80 : 450))
         modal: true
+        focus: true
         closePolicy: Popup.CloseOnPressOutside | Popup.CloseOnEscape
         visible: showEQ
         
+        // Center the popup properly relative to root window
+        x: rootWindow ? Math.max(0, (rootWindow.width - width) / 2) : 0
+        y: rootWindow ? Math.max(0, (rootWindow.height - height) / 2) : 0
+        
         background: Rectangle {
+            id: eqPopupBackground
             radius: 20
-            // Use the same dynamic color as the controls bar
+            // Use dynamic color like MetadataPopup (lighter for better visibility)
             color: Qt.rgba(
-                Qt.lighter(accentColor, 1.1).r,
-                Qt.lighter(accentColor, 1.1).g,
-                Qt.lighter(accentColor, 1.1).b,
+                Qt.lighter(accentColor, 1.3).r,
+                Qt.lighter(accentColor, 1.3).g,
+                Qt.lighter(accentColor, 1.3).b,
                 0.95
             )
-            border.color: Qt.rgba(255, 255, 255, 0.2)
-            border.width: 1
+            border.width: 0
             
-            // Modern drop shadow using layer
+            // Modern drop shadow matching MetadataPopup style
             layer.enabled: true
             layer.effect: DropShadow {
-                radius: 20
-                samples: 41
-                color: Qt.rgba(0, 0, 0, 0.5)
-                verticalOffset: 4
+                transparentBorder: true
                 horizontalOffset: 0
+                verticalOffset: 4
+                radius: 16
+                samples: 32
+                color: Qt.rgba(0, 0, 0, 0.25)
+            }
+            
+            // Entrance animation matching MetadataPopup
+            scale: 0.9
+            opacity: 0
+            Behavior on scale {
+                NumberAnimation { duration: 300; easing.type: Easing.OutCubic }
+            }
+            Behavior on opacity {
+                NumberAnimation { duration: 300; easing.type: Easing.OutCubic }
+            }
+            Component.onCompleted: {
+                if (eqPopup.visible) {
+                    scale = 1.0
+                    opacity = 1.0
+                }
             }
         }
         
+        // Update animation when popup becomes visible
         onVisibleChanged: {
             if (visible) {
+                eqPopupBackground.scale = 1.0
+                eqPopupBackground.opacity = 1.0
                 // Sync EQ enabled state when popup opens
                 // Signal will be emitted to parent to sync state
+            } else {
+                eqPopupBackground.scale = 0.9
+                eqPopupBackground.opacity = 0.0
             }
         }
         
@@ -1025,82 +1058,115 @@ Item {
             showEQ = false
         }
         
-        // Close button
+        // Header with close button (styled like MetadataPopup)
         Rectangle {
-            id: closeButton
+            id: eqHeader
             anchors.top: parent.top
+            anchors.left: parent.left
             anchors.right: parent.right
-            anchors.margins: 12
-            width: 36
-            height: 36
-            radius: 8
-            property bool isHovered: false
-            property bool isPressed: false
+            height: 56
+            color: "transparent"
+            radius: 20
+            clip: true
             
-            color: isPressed
-                   ? pressedButtonColor
-                   : (isHovered
-                      ? hoverButtonColor
-                      : "transparent")
-            
-            Behavior on color {
-                ColorAnimation { duration: 200; easing.type: Easing.OutCubic }
-            }
-            Behavior on scale {
-                NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
-            }
-            
-            scale: isPressed ? 0.9 : (isHovered ? 1.05 : 1.0)
-            
-            Text {
-                anchors.centerIn: parent
-                text: "×"
-                color: iconColor
-                font.pixelSize: 20
-                font.family: "Segoe UI"
-                font.weight: Font.Bold
-                opacity: 0.9
-            }
-            
-            TapHandler {
-                id: closeButtonTap
-                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-                acceptedButtons: Qt.LeftButton
-                
-                onTapped: {
-                    showEQ = false
-                    eqToggled(false)
-                }
-                onPressedChanged: closeButton.isPressed = pressed
-            }
-            
-            HoverHandler {
-                id: closeButtonHover
-                cursorShape: Qt.PointingHandCursor
-                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-                onHoveredChanged: closeButton.isHovered = hovered
-            }
-        }
-        
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 24
-            spacing: 16
-            
-            // Title and Enable Toggle
             RowLayout {
-                Layout.fillWidth: true
+                anchors.fill: parent
+                anchors.leftMargin: 24
+                anchors.rightMargin: 16
                 spacing: 16
                 
                 Text {
                     Layout.fillWidth: true
                     text: "Equalizer"
                     color: iconColor
-                    font.pixelSize: 24
-                    font.family: "Segoe UI"
-                    font.weight: Font.Bold
-                    horizontalAlignment: Text.AlignHCenter
-                    opacity: 0.9
+                    font.pixelSize: 20
+                    font.weight: Font.Medium
+                    font.letterSpacing: 0.5
+                }
+                
+                // Close button (styled like MetadataPopup)
+                Rectangle {
+                    id: closeButton
+                    Layout.preferredWidth: 32
+                    Layout.preferredHeight: 32
+            radius: 8
+            property bool isPressed: false
+                    color: closeButtonHover.hovered
+                           ? (isPressed 
+                              ? Qt.rgba(0.9, 0.2, 0.2, 0.3)
+                              : Qt.rgba(0.9, 0.2, 0.2, 0.2))
+                           : "transparent"
+            
+            Behavior on color {
+                        ColorAnimation { duration: 150; easing.type: Easing.OutCubic }
+            }
+            Behavior on scale {
+                NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+            }
+            
+                    property real scale: 1.0
+                    transform: Scale { xScale: closeButton.scale; yScale: closeButton.scale }
+            
+                    Image {
+                        id: closeIcon
+                anchors.centerIn: parent
+                        source: "qrc:/qlementine/icons/16/action/windows-close.svg"
+                        sourceSize: Qt.size(16, 16)
+                        ColorOverlay {
+                            anchors.fill: closeIcon
+                            source: closeIcon
+                color: iconColor
+                opacity: 0.9
+                        }
+            }
+            
+            TapHandler {
+                id: closeButtonTap
+                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                acceptedButtons: Qt.LeftButton
+                        gesturePolicy: TapHandler.ReleaseWithinBounds
+                onTapped: {
+                    showEQ = false
+                    eqToggled(false)
+                }
+                        onPressedChanged: {
+                            closeButton.isPressed = pressed
+                            if (pressed) {
+                                closeButton.scale = 0.9
+                            } else {
+                                closeButton.scale = closeButtonHover.hovered ? 1.05 : 1.0
+                            }
+                        }
+                    }
+            HoverHandler {
+                id: closeButtonHover
+                cursorShape: Qt.PointingHandCursor
+                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                        onHoveredChanged: {
+                            if (hovered && !closeButton.isPressed) {
+                                closeButton.scale = 1.05
+                            } else if (!hovered && !closeButton.isPressed) {
+                                closeButton.scale = 1.0
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.topMargin: 56  // Account for header
+            anchors.margins: 24
+            spacing: 16
+            
+            // Enable/Disable Toggle (moved below header)
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 16
+                
+                Item {
+                    Layout.fillWidth: true
                 }
                 
                 // Enable/Disable Toggle
@@ -1134,7 +1200,6 @@ Item {
                         text: audioControls.eqEnabled ? "ON" : "OFF"
                         color: iconColor
                         font.pixelSize: 12
-                        font.family: "Segoe UI"
                         font.weight: Font.Bold
                         opacity: 0.9
                     }
@@ -1157,6 +1222,10 @@ Item {
                         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                         onHoveredChanged: eqToggleButton.isHovered = hovered
                     }
+                }
+                
+                Item {
+                    Layout.fillWidth: true
                 }
             }
             
@@ -1183,7 +1252,6 @@ Item {
                             text: freqs[bandIndex] + " Hz"
                             color: iconColor
                             font.pixelSize: 10
-                            font.family: "Segoe UI"
                             font.weight: Font.Medium
                             horizontalAlignment: Text.AlignHCenter
                             opacity: 0.9
@@ -1272,7 +1340,6 @@ Item {
                                 }
                                 color: iconColor
                                 font.pixelSize: 9
-                                font.family: "Segoe UI"
                                 font.weight: Font.Medium
                                 opacity: 0.9
                             }
@@ -1310,7 +1377,6 @@ Item {
                     text: "Reset"
                     color: iconColor
                     font.pixelSize: 12
-                    font.family: "Segoe UI"
                     font.weight: Font.Medium
                     opacity: 0.9
                 }

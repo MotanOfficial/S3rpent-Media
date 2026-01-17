@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Qt5Compat.GraphicalEffects
+import QtCore
 
 Rectangle {
     id: settingsPage
@@ -29,6 +30,7 @@ Rectangle {
     property bool discordRPCEnabled: true
     property string coverArtSource: "coverartarchive"  // "coverartarchive" or "lastfm"
     property string lastFMApiKey: ""
+    property bool debugConsoleEnabled: false
     
     signal backClicked()
     signal dynamicColoringToggled(bool enabled)
@@ -38,6 +40,7 @@ Rectangle {
     signal snowEffectToggled(bool enabled)
     signal badAppleEffectToggled(bool enabled)
     signal badAppleEasterEggClicked()
+    signal undertaleEasterEggClicked()
     signal betaAudioProcessingToggled(bool enabled)
     signal lyricsTranslationToggled(bool enabled)
     signal lyricsTranslationApiKeyEdited(string apiKey)
@@ -50,6 +53,7 @@ Rectangle {
     signal discordRPCToggled(bool enabled)
     signal coverArtSourceSelected(string source)
     signal lastFMApiKeyEdited(string apiKey)
+    signal debugConsoleToggled(bool enabled)
     
     // Modern popup container
     Layout.fillWidth: true
@@ -341,6 +345,7 @@ Rectangle {
                         model: [
                             { id: "appearance", name: qsTr("Appearance"), icon: "qrc:/qlementine/icons/16/misc/pen.svg" },
                             { id: "display", name: qsTr("Display"), icon: "qrc:/qlementine/icons/16/hardware/screen.svg" },
+                            { id: "video", name: qsTr("Video"), icon: "qrc:/qlementine/icons/16/hardware/screen.svg" },
                             { id: "audio", name: qsTr("Audio"), icon: "qrc:/qlementine/icons/16/hardware/speaker.svg" },
                             { id: "translation", name: qsTr("Translation"), icon: "qrc:/qlementine/icons/16/misc/info.svg" },
                             { id: "general", name: qsTr("General"), icon: "qrc:/qlementine/icons/16/navigation/settings.svg" },
@@ -467,6 +472,7 @@ Rectangle {
                             switch(currentSection) {
                                 case "appearance": return appearanceContent
                                 case "display": return displayContent
+                                case "video": return videoContent
                                 case "audio": return audioContent
                                 case "translation": return translationContent
                                 case "general": return generalContent
@@ -841,6 +847,24 @@ Rectangle {
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
+            
+            ModernButton {
+                label: qsTr("⚔️ Start Undertale Fight Easter Egg")
+                icon: "qrc:/qlementine/icons/16/media/play.svg"
+                primary: true
+                Layout.topMargin: 24
+                onClicked: undertaleEasterEggClicked()
+            }
+                
+                Text {
+                text: qsTr("🎁 Easter Egg: Experience an Undertale-style battle")
+                font.pixelSize: 12
+                color: foregroundColor
+                opacity: 0.6
+                Layout.topMargin: 8
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
         }
     }
     
@@ -1046,6 +1070,611 @@ Rectangle {
                 }
             }
         }
+        }
+    }
+    
+    Component {
+        id: videoContent
+        
+        ColumnLayout {
+            spacing: 0
+            width: parent.width
+            
+            // Helper property to determine if libmpv is selected
+            readonly property bool isLibmpvSelected: {
+                var backend = videoPlayerSettings.videoBackend || (videoPlayerSettings.useWMF ? "wmf" : "mediaplayer")
+                return backend === "libmpv"
+            }
+            
+            Text {
+                text: qsTr("Video")
+                font.pixelSize: 24
+                font.weight: Font.Bold
+                color: foregroundColor
+                Layout.bottomMargin: 8
+            }
+            
+            Text {
+                text: qsTr("Configure video playback and player options")
+                font.pixelSize: 13
+                color: foregroundColor
+                opacity: 0.7
+                Layout.bottomMargin: 24
+            }
+            
+            Text {
+                text: qsTr("Video Player")
+                font.pixelSize: 15
+                font.weight: Font.Medium
+                color: foregroundColor
+                Layout.topMargin: 20
+                Layout.bottomMargin: 8
+            }
+            
+            Settings {
+                id: videoPlayerSettings
+                category: "video"
+                property bool useWMF: false  // Legacy: kept for backward compatibility
+                property string videoBackend: "mediaplayer"  // "mediaplayer", "wmf", or "libmpv"
+                property string subtitleEngine: "external"  // "embedded" or "external"
+                property string mpvRendererMode: "opengl"  // "opengl" or "d3d11" (only applies when videoBackend is "libmpv")
+                
+                // Ensure settings are synced when mpvRendererMode changes
+                onMpvRendererModeChanged: {
+                    console.log("[Settings] mpvRendererMode changed to:", mpvRendererMode)
+                    sync()
+                }
+            }
+            
+            Rectangle {
+                id: playerSelector
+                Layout.fillWidth: true
+                Layout.preferredHeight: 44
+                radius: 12
+                color: Qt.rgba(1, 1, 1, 0.08)
+                border.width: 1
+                border.color: Qt.rgba(1, 1, 1, 0.15)
+                
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 16
+                    anchors.rightMargin: 16
+                    
+                    Text {
+                        text: {
+                            var backend = videoPlayerSettings.videoBackend || (videoPlayerSettings.useWMF ? "wmf" : "mediaplayer")
+                            if (backend === "libvlc") return qsTr("VLC (libvlc)")
+                            if (backend === "libmpv") return qsTr("libmpv")
+                            if (backend === "wmf") return qsTr("WMF (Windows Media Foundation)")
+                            if (backend === "ffmpeg") return qsTr("FFmpeg (D3D11)")
+                            return qsTr("MediaPlayer (Qt Multimedia)")
+                        }
+                        font.pixelSize: 14
+                        color: foregroundColor
+                        Layout.fillWidth: true
+                    }
+                    
+                    Image {
+                        id: playerChevronIcon
+                        source: "qrc:/qlementine/icons/16/navigation/chevron-down.svg"
+                        sourceSize: Qt.size(16, 16)
+                        visible: false
+                    }
+                    ColorOverlay {
+                        width: 16
+                        height: 16
+                        source: playerChevronIcon
+                        color: foregroundColor
+                        opacity: 0.6
+                    }
+                }
+                
+                TapHandler {
+                    onTapped: playerPopup.open()
+                }
+            }
+            
+            Text {
+                text: {
+                    var backend = videoPlayerSettings.videoBackend || (videoPlayerSettings.useWMF ? "wmf" : "mediaplayer")
+                    if (backend === "libvlc") {
+                        return qsTr("VLC provides excellent format support and stability, similar to the standalone VLC player. Requires restart to take effect.")
+                    } else if (backend === "libmpv") {
+                        return qsTr("libmpv provides full HDR10/Dolby Vision support, proper tone mapping, BT.2020 color space conversion, and GPU-accelerated output. Best for HDR content. Requires restart to take effect.")
+                    } else if (backend === "wmf") {
+                        return qsTr("WMF provides better hardware acceleration and handles problematic videos better, but does not support audio/subtitle track selection. Requires restart to take effect.")
+                    } else if (backend === "ffmpeg") {
+                        return qsTr("FFmpeg with D3D11VA provides modern GPU-accelerated HDR playback, zero-copy rendering, and proper HDR10/Dolby Vision support. Best for 4K HDR content. Requires restart to take effect.")
+                    } else {
+                        return qsTr("MediaPlayer supports audio and subtitle track selection, but may have issues with some video formats and limited HDR support. Requires restart to take effect.")
+                    }
+                }
+                font.pixelSize: 12
+                color: foregroundColor
+                opacity: 0.7
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                Layout.topMargin: 8
+            }
+            
+            Popup {
+                id: playerPopup
+                x: 0
+                y: playerSelector.height + 2
+                width: playerSelector.width
+                height: Math.min(300, playerList.height + 16)
+                modal: true
+                closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                
+                background: Rectangle {
+                    radius: 12
+                    color: Qt.rgba(0.1, 0.1, 0.1, 0.95)
+                    border.width: 1
+                    border.color: Qt.rgba(1, 1, 1, 0.15)
+                    
+                    layer.enabled: true
+                    layer.effect: DropShadow {
+                        transparentBorder: true
+                        horizontalOffset: 0
+                        verticalOffset: 4
+                        radius: 16
+                        samples: 32
+                        color: Qt.rgba(0, 0, 0, 0.5)
+                    }
+                }
+                
+                Column {
+                    id: playerList
+                    width: parent.width
+                    spacing: 4
+                    padding: 8
+                    
+                    Repeater {
+                        model: [
+                            { value: "mediaplayer", label: qsTr("MediaPlayer (Qt Multimedia)"), description: qsTr("Supports track selection, basic HDR") },
+                            { value: "wmf", label: qsTr("WMF (Windows Media Foundation)"), description: qsTr("Better hardware acceleration, Windows only") },
+                            { value: "libvlc", label: qsTr("VLC (libvlc)"), description: qsTr("Excellent format support, reliable playback") },
+                            { value: "libmpv", label: qsTr("libmpv"), description: qsTr("Full HDR10/Dolby Vision support, proper tone mapping, GPU-accelerated (⚠️ May not work on Qt 6 Windows - use WMF instead)") },
+                            { value: "ffmpeg", label: qsTr("FFmpeg (D3D11)"), description: qsTr("Modern GPU-accelerated HDR playback with D3D11VA, best for 4K HDR content") }
+                        ]
+                        
+                        Rectangle {
+                            width: playerList.width - 16
+                            height: 52
+                            radius: 8
+                            color: playerItemMouseArea.containsMouse ? Qt.rgba(1, 1, 1, 0.1) : "transparent"
+                            
+                            // Check both new and legacy settings for backward compatibility
+                            property bool isSelected: {
+                                var backend = videoPlayerSettings.videoBackend || (videoPlayerSettings.useWMF ? "wmf" : "mediaplayer")
+                                return backend === modelData.value
+                            }
+                            
+                            MouseArea {
+                                id: playerItemMouseArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                onClicked: {
+                                    videoPlayerSettings.videoBackend = modelData.value
+                                    // Update legacy setting for backward compatibility
+                                    if (modelData.value === "wmf") {
+                                        videoPlayerSettings.useWMF = true
+                                    } else if (modelData.value === "mediaplayer") {
+                                        videoPlayerSettings.useWMF = false
+                                    }
+                                    playerPopup.close()
+                                }
+                            }
+                            
+                            Column {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 12
+                                anchors.right: parent.right
+                                anchors.rightMargin: 12
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 4
+                                
+                                Text {
+                                    text: modelData.label
+                                    font.pixelSize: 14
+                                    font.weight: isSelected ? Font.Medium : Font.Normal
+                                    color: foregroundColor
+                                }
+                                
+                                Text {
+                                    text: modelData.description
+                                    font.pixelSize: 12
+                                    color: foregroundColor
+                                    opacity: 0.7
+                                }
+                            }
+                            
+                            Rectangle {
+                                anchors.right: parent.right
+                                anchors.rightMargin: 12
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 20
+                                height: 20
+                                radius: 10
+                                color: isSelected ? "#4CAF50" : "transparent"
+                                border.width: isSelected ? 0 : 2
+                                border.color: Qt.rgba(1, 1, 1, 0.3)
+                                
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "✓"
+                                    font.pixelSize: 14
+                                    color: "white"
+                                    visible: isSelected
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            Text {
+                text: qsTr("Subtitle Engine")
+                font.pixelSize: 15
+                font.weight: Font.Medium
+                color: foregroundColor
+                Layout.topMargin: 32
+                Layout.bottomMargin: 8
+            }
+            
+            Rectangle {
+                id: subtitleEngineSelector
+                Layout.fillWidth: true
+                Layout.preferredHeight: 44
+                radius: 12
+                color: Qt.rgba(1, 1, 1, 0.08)
+                border.width: 1
+                border.color: Qt.rgba(1, 1, 1, 0.15)
+                
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 16
+                    anchors.rightMargin: 16
+                    
+                    Text {
+                        text: videoPlayerSettings.subtitleEngine === "embedded" 
+                            ? qsTr("Embedded (from video file)") 
+                            : qsTr("External (imported files)")
+                        font.pixelSize: 14
+                        color: foregroundColor
+                        Layout.fillWidth: true
+                    }
+                    
+                    Image {
+                        id: subtitleEngineChevronIcon
+                        source: "qrc:/qlementine/icons/16/navigation/chevron-down.svg"
+                        sourceSize: Qt.size(16, 16)
+                        visible: false
+                    }
+                    ColorOverlay {
+                        width: 16
+                        height: 16
+                        source: subtitleEngineChevronIcon
+                        color: foregroundColor
+                        opacity: 0.6
+                    }
+                }
+                
+                TapHandler {
+                    onTapped: subtitleEnginePopup.open()
+                }
+            }
+            
+            Text {
+                text: videoPlayerSettings.subtitleEngine === "embedded"
+                    ? qsTr("Uses subtitles embedded in the video file. Select tracks from the video context menu.")
+                    : qsTr("Uses external subtitle files imported via the video context menu. Supports SRT, ASS, SSA formats.")
+                font.pixelSize: 12
+                color: foregroundColor
+                opacity: 0.7
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                Layout.topMargin: 8
+            }
+            
+            Popup {
+                id: subtitleEnginePopup
+                x: 0
+                y: subtitleEngineSelector.height + 2
+                width: subtitleEngineSelector.width
+                height: Math.min(200, subtitleEngineList.height + 16)
+                modal: true
+                closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                parent: subtitleEngineSelector
+                
+                background: Rectangle {
+                    radius: 12
+                    color: Qt.rgba(0.1, 0.1, 0.1, 0.95)
+                    border.width: 1
+                    border.color: Qt.rgba(1, 1, 1, 0.15)
+                    
+                    layer.enabled: true
+                    layer.effect: DropShadow {
+                        transparentBorder: true
+                        horizontalOffset: 0
+                        verticalOffset: 4
+                        radius: 16
+                        samples: 32
+                        color: Qt.rgba(0, 0, 0, 0.5)
+                    }
+                }
+                
+                contentItem: Column {
+                    id: subtitleEngineList
+                    width: subtitleEnginePopup.width
+                    spacing: 4
+                    padding: 8
+                    
+                    Repeater {
+                        model: [
+                            { value: "external", label: qsTr("External (imported files)"), description: qsTr("SRT, ASS, SSA support") },
+                            { value: "embedded", label: qsTr("Embedded (from video)"), description: qsTr("Uses video file subtitles") }
+                        ]
+                        
+                        Rectangle {
+                            width: subtitleEngineList.width - 16
+                            height: 52
+                            radius: 8
+                            color: subtitleEngineItemMouseArea.containsMouse ? Qt.rgba(1, 1, 1, 0.1) : "transparent"
+                            
+                            property bool isSelected: videoPlayerSettings.subtitleEngine === modelData.value
+                            
+                            MouseArea {
+                                id: subtitleEngineItemMouseArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                onClicked: {
+                                    videoPlayerSettings.subtitleEngine = modelData.value
+                                    subtitleEnginePopup.close()
+                                }
+                            }
+                            
+                            Column {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 12
+                                anchors.right: parent.right
+                                anchors.rightMargin: 12
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 4
+                                
+                                Text {
+                                    text: modelData.label
+                                    font.pixelSize: 14
+                                    font.weight: isSelected ? Font.Medium : Font.Normal
+                                    color: foregroundColor
+                                }
+                                
+                                Text {
+                                    text: modelData.description
+                                    font.pixelSize: 12
+                                    color: foregroundColor
+                                    opacity: 0.7
+                                }
+                            }
+                            
+                            Rectangle {
+                                anchors.right: parent.right
+                                anchors.rightMargin: 12
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 20
+                                height: 20
+                                radius: 10
+                                color: isSelected ? "#4CAF50" : "transparent"
+                                border.width: isSelected ? 0 : 2
+                                border.color: Qt.rgba(1, 1, 1, 0.3)
+                                
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "✓"
+                                    font.pixelSize: 14
+                                    color: "white"
+                                    visible: isSelected
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // MPV Renderer Mode (only shown when libmpv is selected)
+            Text {
+                text: qsTr("MPV Renderer Mode")
+                font.pixelSize: 15
+                font.weight: Font.Medium
+                color: foregroundColor
+                Layout.topMargin: 32
+                Layout.bottomMargin: 8
+                visible: {
+                    var backend = videoPlayerSettings.videoBackend || (videoPlayerSettings.useWMF ? "wmf" : "mediaplayer")
+                    return backend === "libmpv"
+                }
+            }
+            
+            Rectangle {
+                id: rendererModeSelector
+                Layout.fillWidth: true
+                Layout.preferredHeight: 44
+                radius: 12
+                color: Qt.rgba(1, 1, 1, 0.08)
+                border.width: 1
+                border.color: Qt.rgba(1, 1, 1, 0.15)
+                visible: {
+                    var backend = videoPlayerSettings.videoBackend || (videoPlayerSettings.useWMF ? "wmf" : "mediaplayer")
+                    return backend === "libmpv"
+                }
+                
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 16
+                    anchors.rightMargin: 16
+                    
+                    Text {
+                        text: videoPlayerSettings.mpvRendererMode === "d3d11"
+                            ? qsTr("D3D11 (Recommended for Windows)")
+                            : qsTr("OpenGL (Legacy)")
+                        font.pixelSize: 14
+                        color: foregroundColor
+                        Layout.fillWidth: true
+                    }
+                    
+                    Image {
+                        id: rendererModeChevronIcon
+                        source: "qrc:/qlementine/icons/16/navigation/chevron-down.svg"
+                        sourceSize: Qt.size(16, 16)
+                        visible: false
+                    }
+                    ColorOverlay {
+                        width: 16
+                        height: 16
+                        source: rendererModeChevronIcon
+                        color: foregroundColor
+                        opacity: 0.6
+                    }
+                }
+                
+                TapHandler {
+                    onTapped: rendererModePopup.open()
+                }
+            }
+            
+            Text {
+                text: {
+                    if (videoPlayerSettings.mpvRendererMode === "d3d11") {
+                        return qsTr("D3D11 renderer uses native DirectX 11 for rendering. Provides better Windows integration, no white artifacts, proper maximize/snap support, and native HDR. This is the recommended mode for Windows. Requires restart to take effect.")
+                    } else {
+                        return qsTr("OpenGL renderer uses OpenGL for rendering. May have issues with frameless windows, white artifacts on maximize, and broken Aero Snap on Windows. Use D3D11 mode instead for better Windows compatibility. Requires restart to take effect.")
+                    }
+                }
+                font.pixelSize: 12
+                color: foregroundColor
+                opacity: 0.7
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                Layout.topMargin: 8
+                visible: {
+                    var backend = videoPlayerSettings.videoBackend || (videoPlayerSettings.useWMF ? "wmf" : "mediaplayer")
+                    return backend === "libmpv"
+                }
+            }
+            
+            Popup {
+                id: rendererModePopup
+                x: 0
+                y: rendererModeSelector.height + 2
+                width: rendererModeSelector.width
+                height: Math.min(200, rendererModeList.height + 16)
+                modal: true
+                closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                parent: rendererModeSelector
+                
+                background: Rectangle {
+                    radius: 12
+                    color: Qt.rgba(0.1, 0.1, 0.1, 0.95)
+                    border.width: 1
+                    border.color: Qt.rgba(1, 1, 1, 0.15)
+                    
+                    layer.enabled: true
+                    layer.effect: DropShadow {
+                        transparentBorder: true
+                        horizontalOffset: 0
+                        verticalOffset: 4
+                        radius: 16
+                        samples: 32
+                        color: Qt.rgba(0, 0, 0, 0.5)
+                    }
+                }
+                
+                contentItem: Column {
+                    id: rendererModeList
+                    width: rendererModePopup.width
+                    spacing: 4
+                    padding: 8
+                    
+                    Repeater {
+                        model: [
+                            { value: "d3d11", label: qsTr("D3D11 (Recommended for Windows)"), description: qsTr("Native DirectX 11, better Windows integration") },
+                            { value: "opengl", label: qsTr("OpenGL (Legacy)"), description: qsTr("OpenGL renderer, may have Windows issues") }
+                        ]
+                        
+                        Rectangle {
+                            width: rendererModePopup.width - 16
+                            height: 52
+                            radius: 8
+                            color: rendererModeItemMouseArea.containsMouse ? Qt.rgba(1, 1, 1, 0.1) : "transparent"
+                            
+                            property bool isSelected: videoPlayerSettings.mpvRendererMode === modelData.value
+                            
+                            MouseArea {
+                                id: rendererModeItemMouseArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                onClicked: {
+                                    console.log("[Settings] Changing mpvRendererMode from", videoPlayerSettings.mpvRendererMode, "to", modelData.value)
+                                    videoPlayerSettings.mpvRendererMode = modelData.value
+                                    console.log("[Settings] mpvRendererMode is now:", videoPlayerSettings.mpvRendererMode)
+                                    // Force sync to ensure setting is saved immediately
+                                    videoPlayerSettings.sync()
+                                    console.log("[Settings] Settings synced to disk")
+                                    rendererModePopup.close()
+                                }
+                            }
+                            
+                            RowLayout {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 12
+                                anchors.right: parent.right
+                                anchors.rightMargin: 12
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 12
+                                
+                                Column {
+                                    Layout.fillWidth: true
+                                    spacing: 4
+                                    
+                                    Text {
+                                        text: modelData.label
+                                        font.pixelSize: 14
+                                        font.weight: isSelected ? Font.Medium : Font.Normal
+                                        color: foregroundColor
+                                        elide: Text.ElideRight
+                                    }
+                                    
+                                    Text {
+                                        text: modelData.description
+                                        font.pixelSize: 12
+                                        color: foregroundColor
+                                        opacity: 0.7
+                                        wrapMode: Text.WordWrap
+                                        Layout.fillWidth: true
+                                    }
+                                }
+                                
+                                Rectangle {
+                                    Layout.preferredWidth: 20
+                                    Layout.preferredHeight: 20
+                                    radius: 10
+                                    color: isSelected ? "#4CAF50" : "transparent"
+                                    border.width: isSelected ? 0 : 2
+                                    border.color: Qt.rgba(1, 1, 1, 0.3)
+                                    
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "✓"
+                                        font.pixelSize: 14
+                                        color: "white"
+                                        visible: isSelected
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     
@@ -1596,6 +2225,14 @@ Rectangle {
                 }
             }
         }
+
+            ModernToggle {
+                label: qsTr("Enable Debug Console")
+                description: qsTr("Show a debug console window with logging information and memory usage. Requires application restart to take effect.")
+                checked: debugConsoleEnabled
+                onToggled: (checked) => debugConsoleToggled(checked)
+                Layout.topMargin: 24
+            }
 
             Text {
                 text: qsTr("File Associations")
