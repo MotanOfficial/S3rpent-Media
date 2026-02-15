@@ -69,6 +69,8 @@ ApplicationWindow {
     property bool isMarkdown: false
     property bool isText: false
     property bool isPdf: false
+    property bool isZip: false
+    property bool isModel: false
     property real zoomFactor: 1.0
     property real panX: 0
     property real panY: 0
@@ -212,7 +214,7 @@ ApplicationWindow {
     // Image navigation properties
     property var directoryImages: []
     property int currentImageIndex: 0
-    property bool isImageType: !isVideo && !isAudio && !isMarkdown && !isText && !isPdf && currentImage.toString() !== ""
+    property bool isImageType: !isVideo && !isAudio && !isMarkdown && !isText && !isPdf && !isZip && !isModel && currentImage.toString() !== ""
     property bool _navigatingImages: false  // Flag to prevent re-scanning during navigation
     property bool showImageControls: false  // Toggle for image controls visibility
 
@@ -223,9 +225,11 @@ ApplicationWindow {
     property var markdownViewer: pageStack.mediaViewerLoaders.markdownViewerLoader.item
     property var textViewer: pageStack.mediaViewerLoaders.textViewerLoader.item
     property var pdfViewer: pageStack.mediaViewerLoaders.pdfViewerLoader.item
+    property var zipViewer: pageStack.mediaViewerLoaders.zipViewerLoader.item
+    property var modelViewer: pageStack.mediaViewerLoaders.modelViewerLoader.item
 
     function adjustZoom(delta) {
-        ViewManagementUtils.adjustZoom(delta, pageStack.mediaViewerLoaders.viewerLoader.item, currentImage !== "", isVideo, isAudio, isMarkdown, isText, isPdf)
+        ViewManagementUtils.adjustZoom(delta, pageStack.mediaViewerLoaders.viewerLoader.item, currentImage !== "", isVideo, isAudio, isMarkdown, isText, isPdf, isZip, isModel)
     }
     
     // Image navigation functions
@@ -259,7 +263,7 @@ ApplicationWindow {
     }
 
     function resetView() {
-        ViewManagementUtils.resetView(pageStack.mediaViewerLoaders.viewerLoader.item, isVideo, isAudio, isMarkdown, isText, isPdf)
+        ViewManagementUtils.resetView(pageStack.mediaViewerLoaders.viewerLoader.item, isVideo, isAudio, isMarkdown, isText, isPdf, isZip, isModel)
     }
     
     function unloadMedia() {
@@ -287,7 +291,7 @@ ApplicationWindow {
     }
 
     function clampPan() {
-        ViewManagementUtils.clampPan(pageStack.mediaViewerLoaders.viewerLoader.item, currentImage !== "", isVideo, isAudio, isMarkdown, isText, isPdf, window)
+        ViewManagementUtils.clampPan(pageStack.mediaViewerLoaders.viewerLoader.item, currentImage !== "", isVideo, isAudio, isMarkdown, isText, isPdf, isZip, isModel, window)
     }
 
     function useFallbackAccent() {
@@ -305,6 +309,8 @@ ApplicationWindow {
     function checkIfMarkdown(url) { return FileTypeUtils.checkIfMarkdown(url) }
     function checkIfText(url) { return FileTypeUtils.checkIfText(url) }
     function checkIfPdf(url) { return FileTypeUtils.checkIfPdf(url) }
+    function checkIfZip(url) { return FileTypeUtils.checkIfZip(url) }
+    function checkIfModel(url) { return FileTypeUtils.checkIfModel(url) }
     
     // Format time function - now imported from MediaFormatUtils.js
     function formatTime(ms) { return MediaFormatUtils.formatTime(ms) }
@@ -456,9 +462,37 @@ ApplicationWindow {
             MediaLoaderUtils: MediaLoaderUtils
         })
     }
+
+    function loadZipViewer() {
+        MediaLoaderFunctions.loadZipViewer({
+            mediaViewerLoaders: pageStack.mediaViewerLoaders,
+            MediaLoaderUtils: MediaLoaderUtils
+        })
+    }
+
+    function loadModelViewer() {
+        MediaLoaderFunctions.loadModelViewer({
+            mediaViewerLoaders: pageStack.mediaViewerLoaders,
+            MediaLoaderUtils: MediaLoaderUtils
+        })
+    }
     
     function unloadPdfViewer() {
         MediaLoaderFunctions.unloadPdfViewer({
+            mediaViewerLoaders: pageStack.mediaViewerLoaders,
+            MediaLoaderUtils: MediaLoaderUtils
+        })
+    }
+
+    function unloadZipViewer() {
+        MediaLoaderFunctions.unloadZipViewer({
+            mediaViewerLoaders: pageStack.mediaViewerLoaders,
+            MediaLoaderUtils: MediaLoaderUtils
+        })
+    }
+
+    function unloadModelViewer() {
+        MediaLoaderFunctions.unloadModelViewer({
             mediaViewerLoaders: pageStack.mediaViewerLoaders,
             MediaLoaderUtils: MediaLoaderUtils
         })
@@ -489,6 +523,8 @@ ApplicationWindow {
             checkIfMarkdown: checkIfMarkdown,
             checkIfText: checkIfText,
             checkIfPdf: checkIfPdf,
+            checkIfZip: checkIfZip,
+            checkIfModel: checkIfModel,
             resetView: resetView,
             restoreDefaultWindowSize: restoreDefaultWindowSize,
             loadVideoPlayer: loadVideoPlayer,
@@ -496,6 +532,8 @@ ApplicationWindow {
             loadMarkdownViewer: loadMarkdownViewer,
             loadTextViewer: loadTextViewer,
             loadPdfViewer: loadPdfViewer,
+            loadZipViewer: loadZipViewer,
+            loadModelViewer: loadModelViewer,
             loadImageViewer: loadImageViewer,
             unloadImageViewer: unloadImageViewer,
             unloadVideoPlayer: unloadVideoPlayer,
@@ -503,6 +541,8 @@ ApplicationWindow {
             unloadMarkdownViewer: unloadMarkdownViewer,
             unloadTextViewer: unloadTextViewer,
             unloadPdfViewer: unloadPdfViewer,
+            unloadZipViewer: unloadZipViewer,
+            unloadModelViewer: unloadModelViewer,
             useFallbackAccent: useFallbackAccent,
             startLoadTimer: startLoadTimer,
             loadDirectoryImages: loadDirectoryImages,
@@ -532,6 +572,12 @@ ApplicationWindow {
         }
         if (result.propertiesToSet.isPdf !== undefined) {
             isPdf = result.propertiesToSet.isPdf
+        }
+        if (result.propertiesToSet.isZip !== undefined) {
+            isZip = result.propertiesToSet.isZip
+        }
+        if (result.propertiesToSet.isModel !== undefined) {
+            isModel = result.propertiesToSet.isModel
         }
         if (result.propertiesToSet.showImageControls !== undefined) {
             showImageControls = result.propertiesToSet.showImageControls
@@ -738,6 +784,8 @@ ApplicationWindow {
             isMarkdown: window.isMarkdown,
             isText: window.isText,
             isPdf: window.isPdf,
+            isZip: window.isZip,
+            isModel: window.isModel,
             zoomFactor: window.zoomFactor,
             videoPlayer: pageStack.mediaViewerLoaders.videoPlayerLoader.item,
             audioPlayer: pageStack.mediaViewerLoaders.audioPlayerLoader.item,
@@ -745,6 +793,8 @@ ApplicationWindow {
             markdownViewer: pageStack.mediaViewerLoaders.markdownViewerLoader.item,
             textViewer: pageStack.mediaViewerLoaders.textViewerLoader.item,
             pdfViewer: pageStack.mediaViewerLoaders.pdfViewerLoader.item,
+            zipViewer: pageStack.mediaViewerLoaders.zipViewerLoader.item,
+            modelViewer: pageStack.mediaViewerLoaders.modelViewerLoader.item,
             audioFormatInfo: window.audioFormatInfo,
             ColorUtils: ColorUtils,
             qsTr: qsTr,

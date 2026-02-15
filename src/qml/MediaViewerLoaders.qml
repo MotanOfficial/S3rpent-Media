@@ -4,7 +4,7 @@ import QtQuick.Controls
 import Qt5Compat.GraphicalEffects
 
 // MediaViewerLoaders component - encapsulates all media viewer Loader components
-// This includes ImageViewer, VideoPlayer, AudioPlayer, MarkdownViewer, TextViewer, and PdfViewer
+// This includes ImageViewer, VideoPlayer, AudioPlayer, MarkdownViewer, TextViewer, PdfViewer, ZipViewer, and ModelViewer
 Item {
     id: mediaViewerLoaders
     
@@ -61,6 +61,14 @@ Item {
                 pdfViewerLoader.item.source = appWindow.currentImage
                 // accentColor and foregroundColor are bound via Bindings in the Component
             }
+            if (zipViewerLoader.item) {
+                zipViewerLoader.item.source = appWindow.currentImage
+                // accentColor and foregroundColor are bound via Bindings in the Component
+            }
+            if (modelViewerLoader.item) {
+                modelViewerLoader.item.source = appWindow.currentImage
+                // accentColor and foregroundColor are bound via Bindings in the Component
+            }
         }
     }
     
@@ -71,7 +79,7 @@ Item {
         id: viewerLoader
         anchors.fill: parent
         active: false
-        visible: appWindow ? (!appWindow.isVideo && !appWindow.isAudio && !appWindow.isMarkdown && !appWindow.isText && !appWindow.isPdf && appWindow.currentImage !== "") : false
+        visible: appWindow ? (!appWindow.isVideo && !appWindow.isAudio && !appWindow.isMarkdown && !appWindow.isText && !appWindow.isPdf && !appWindow.isZip && !appWindow.isModel && appWindow.currentImage !== "") : false
         
         
         onItemChanged: {
@@ -173,21 +181,21 @@ Item {
                     target: windowRef || null
                     property: "zoomFactor"
                     value: imageViewer.zoomFactor
-                    when: windowRef ? (!windowRef.isVideo && !windowRef.isAudio && !windowRef.isMarkdown && !windowRef.isText && !windowRef.isPdf) : false
+                    when: windowRef ? (!windowRef.isVideo && !windowRef.isAudio && !windowRef.isMarkdown && !windowRef.isText && !windowRef.isPdf && !windowRef.isZip && !windowRef.isModel) : false
                 }
                 
                 Binding {
                     target: windowRef || null
                     property: "panX"
                     value: imageViewer.panX
-                    when: windowRef ? (!windowRef.isVideo && !windowRef.isAudio && !windowRef.isMarkdown && !windowRef.isText && !windowRef.isPdf) : false
+                    when: windowRef ? (!windowRef.isVideo && !windowRef.isAudio && !windowRef.isMarkdown && !windowRef.isText && !windowRef.isPdf && !windowRef.isZip && !windowRef.isModel) : false
                 }
                 
                 Binding {
                     target: windowRef || null
                     property: "panY"
                     value: imageViewer.panY
-                    when: windowRef ? (!windowRef.isVideo && !windowRef.isAudio && !windowRef.isMarkdown && !windowRef.isText && !windowRef.isPdf) : false
+                    when: windowRef ? (!windowRef.isVideo && !windowRef.isAudio && !windowRef.isMarkdown && !windowRef.isText && !windowRef.isPdf && !windowRef.isZip && !windowRef.isModel) : false
                 }
                 
                 // Binding to keep dynamicResolutionEnabled in sync with window
@@ -955,6 +963,130 @@ Item {
             }
         }
     }
+
+    // ZIP viewer component - wrapped in Loader for proper recreation
+    Loader {
+        id: zipViewerLoader
+        anchors.fill: parent
+        active: false
+        visible: appWindow ? (appWindow.isZip && appWindow.currentImage !== "") : false
+
+        onItemChanged: {
+            if (item) {
+                const win = mediaViewerLoaders.appWindow
+                if (win) {
+                    item.source = win.currentImage
+                    item.accentColor = win.accentColor
+                    item.foregroundColor = win.foregroundColor
+                } else {
+                    Qt.callLater(function() {
+                        const win2 = mediaViewerLoaders.appWindow
+                        if (item && win2) {
+                            item.source = win2.currentImage
+                            item.accentColor = win2.accentColor
+                            item.foregroundColor = win2.foregroundColor
+                        }
+                    })
+                }
+            }
+        }
+
+        sourceComponent: Component {
+            ZipViewer {
+                id: zipViewer
+                anchors.fill: parent
+
+                Binding {
+                    target: zipViewer
+                    property: "accentColor"
+                    value: mediaViewerLoaders.appWindow ? mediaViewerLoaders.appWindow.accentColor : "#1e1e1e"
+                    when: mediaViewerLoaders.appWindow ? true : false
+                }
+
+                Binding {
+                    target: zipViewer
+                    property: "foregroundColor"
+                    value: mediaViewerLoaders.appWindow ? mediaViewerLoaders.appWindow.foregroundColor : "#f5f5f5"
+                    when: mediaViewerLoaders.appWindow ? true : false
+                }
+
+                onLoaded: {
+                    const win = mediaViewerLoaders.appWindow
+                    if (!win) return
+                    win.logLoadDuration("ZIP ready", zipViewer.source)
+                    if (win.showingMetadata) {
+                        Qt.callLater(function() {
+                            if (win && mediaViewerLoaders.metadataPopup) {
+                                mediaViewerLoaders.metadataPopup.metadataList = win.getMetadataList()
+                            }
+                        })
+                    }
+                }
+            }
+        }
+    }
+
+    // 3D model viewer component - wrapped in Loader for proper recreation
+    Loader {
+        id: modelViewerLoader
+        anchors.fill: parent
+        active: false
+        visible: appWindow ? (appWindow.isModel && appWindow.currentImage !== "") : false
+
+        onItemChanged: {
+            if (item) {
+                const win = mediaViewerLoaders.appWindow
+                if (win) {
+                    item.source = win.currentImage
+                    item.accentColor = win.accentColor
+                    item.foregroundColor = win.foregroundColor
+                } else {
+                    Qt.callLater(function() {
+                        const win2 = mediaViewerLoaders.appWindow
+                        if (item && win2) {
+                            item.source = win2.currentImage
+                            item.accentColor = win2.accentColor
+                            item.foregroundColor = win2.foregroundColor
+                        }
+                    })
+                }
+            }
+        }
+
+        sourceComponent: Component {
+            ModelViewer {
+                id: modelViewer
+                anchors.fill: parent
+
+                Binding {
+                    target: modelViewer
+                    property: "accentColor"
+                    value: mediaViewerLoaders.appWindow ? mediaViewerLoaders.appWindow.accentColor : "#1e1e1e"
+                    when: mediaViewerLoaders.appWindow ? true : false
+                }
+
+                Binding {
+                    target: modelViewer
+                    property: "foregroundColor"
+                    value: mediaViewerLoaders.appWindow ? mediaViewerLoaders.appWindow.foregroundColor : "#f5f5f5"
+                    when: mediaViewerLoaders.appWindow ? true : false
+                }
+
+                onLoaded: {
+                    const win = mediaViewerLoaders.appWindow
+                    if (!win) return
+                    win.logLoadDuration("Model ready", modelViewer.source)
+                    if (win.showingMetadata) {
+                        Qt.callLater(function() {
+                            if (win && mediaViewerLoaders.metadataPopup) {
+                                mediaViewerLoaders.metadataPopup.metadataList = win.getMetadataList()
+                            }
+                        })
+                    }
+                }
+            }
+        }
+    }
     
     // Save toast notification - now using ToastNotification.qml component
     ToastNotification {
@@ -968,6 +1100,8 @@ Item {
     property alias markdownViewerLoader: markdownViewerLoader
     property alias textViewerLoader: textViewerLoader
     property alias pdfViewerLoader: pdfViewerLoader
+    property alias zipViewerLoader: zipViewerLoader
+    property alias modelViewerLoader: modelViewerLoader
     property alias imageControlsHideTimer: imageControlsHideTimer
     property alias imageControls: imageControls
 }

@@ -8,6 +8,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Multimedia Network Widgets OpenGLWidgets ShaderTools LinguistTools Concurrent Gui GuiPrivate)
 find_package(Qt6 QUIET COMPONENTS Pdf PdfQuick)
+find_package(Qt6 QUIET COMPONENTS Quick3D Quick3DAssetUtils)
+find_package(LibArchive CONFIG QUIET)
+if(NOT LibArchive_FOUND)
+    find_package(LibArchive QUIET)
+endif()
 
 # Note: FFmpeg is used via QProcess (subprocess) for audio decoding
 # This handles HE-AAC correctly by ignoring broken MP4 timestamps
@@ -294,6 +299,12 @@ qt_add_executable(apps3rp3nt_media
     src/cpp/mediaplayerwrapper.h
     src/cpp/embeddedsubtitleextractor.cpp
     src/cpp/embeddedsubtitleextractor.h
+    src/cpp/ziparchivereader.cpp
+    src/cpp/ziparchivereader.h
+    src/cpp/externaldraghelper.cpp
+    src/cpp/externaldraghelper.h
+    src/cpp/modelsourceresolver.cpp
+    src/cpp/modelsourceresolver.h
     $<$<BOOL:${FFMPEG_FOUND}>:src/cpp/ffmpegsubtitleextractor.cpp>
     $<$<BOOL:${FFMPEG_FOUND}>:src/cpp/ffmpegsubtitleextractor.h>
     $<$<BOOL:${FFMPEG_FOUND}>:src/cpp/ffmpegvideoplayer.cpp>
@@ -365,6 +376,8 @@ set(QML_FILES
         src/qml/DebugConsole.qml
         src/qml/TextViewer.qml
         src/qml/PdfViewer.qml
+        src/qml/ZipViewer.qml
+        src/qml/ModelViewer.qml
         src/qml/EmptyState.qml
         src/qml/ToastNotification.qml
         src/qml/InputHandlers.qml
@@ -399,6 +412,11 @@ set(QML_FILES
 # Add PDF implementation only if PDF module is available
 if(TARGET Qt6::Pdf AND TARGET Qt6::PdfQuick)
     list(APPEND QML_FILES src/qml/PdfViewerImpl.qml)
+endif()
+
+# Add 3D model viewer implementation only if Quick3D is available
+if(TARGET Qt6::Quick3D)
+    list(APPEND QML_FILES src/qml/ModelViewerImpl.qml)
 endif()
 
 qt_add_qml_module(apps3rp3nt_media
@@ -471,6 +489,36 @@ target_link_libraries(apps3rp3nt_media
     PRIVATE Qt6::GuiPrivate
     PRIVATE qlementine-icons
 )
+
+if(TARGET Qt6::Quick3D)
+    target_link_libraries(apps3rp3nt_media PRIVATE Qt6::Quick3D)
+    if(TARGET Qt6::Quick3DAssetUtils)
+        target_link_libraries(apps3rp3nt_media PRIVATE Qt6::Quick3DAssetUtils)
+    endif()
+    target_compile_definitions(apps3rp3nt_media PRIVATE HAS_MODEL3D_SUPPORT=1)
+    message(STATUS "3D model support enabled (Qt6::Quick3D found)")
+else()
+    message(STATUS "3D model support disabled (Qt6::Quick3D not found)")
+endif()
+
+if(LibArchive_FOUND)
+    if(TARGET LibArchive::LibArchive)
+        target_link_libraries(apps3rp3nt_media PRIVATE LibArchive::LibArchive)
+    elseif(TARGET libarchive::libarchive)
+        target_link_libraries(apps3rp3nt_media PRIVATE libarchive::libarchive)
+    elseif(TARGET archive)
+        target_link_libraries(apps3rp3nt_media PRIVATE archive)
+    elseif(LibArchive_LIBRARIES)
+        target_link_libraries(apps3rp3nt_media PRIVATE ${LibArchive_LIBRARIES})
+    endif()
+    if(LibArchive_INCLUDE_DIRS)
+        target_include_directories(apps3rp3nt_media PRIVATE ${LibArchive_INCLUDE_DIRS})
+    endif()
+    target_compile_definitions(apps3rp3nt_media PRIVATE HAS_LIBARCHIVE=1)
+    message(STATUS "ZIP extraction/listing: libarchive enabled")
+else()
+    message(STATUS "ZIP extraction/listing: libarchive not found, using external/fallback extractors")
+endif()
 
 # ---- Qt private headers (QRhi) ----
 # Required for: #include <QtGui/private/qrhi_p.h>

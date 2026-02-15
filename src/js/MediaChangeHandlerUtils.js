@@ -19,6 +19,8 @@ function handleCurrentImageChanged(params) {
         checkIfMarkdown,
         checkIfText,
         checkIfPdf,
+        checkIfZip,
+        checkIfModel,
         resetView,
         restoreDefaultWindowSize,
         loadVideoPlayer,
@@ -26,6 +28,8 @@ function handleCurrentImageChanged(params) {
         loadMarkdownViewer,
         loadTextViewer,
         loadPdfViewer,
+        loadZipViewer,
+        loadModelViewer,
         loadImageViewer,
         unloadImageViewer,
         unloadVideoPlayer,
@@ -33,6 +37,8 @@ function handleCurrentImageChanged(params) {
         unloadMarkdownViewer,
         unloadTextViewer,
         unloadPdfViewer,
+        unloadZipViewer,
+        unloadModelViewer,
         useFallbackAccent,
         startLoadTimer,
         loadDirectoryImages,
@@ -72,6 +78,12 @@ function handleCurrentImageChanged(params) {
         if (mediaViewerLoaders.pdfViewerLoader.active) {
             result.actionsToPerform.push(() => unloadPdfViewer())
         }
+        if (mediaViewerLoaders.zipViewerLoader.active) {
+            result.actionsToPerform.push(() => unloadZipViewer())
+        }
+        if (mediaViewerLoaders.modelViewerLoader.active) {
+            result.actionsToPerform.push(() => unloadModelViewer())
+        }
         result.actionsToPerform.push(() => useFallbackAccent())
         result.actionsToPerform.push(() => logToDebugConsole("[Media] Cleared current image", "info"))
         result.shouldReturn = true
@@ -103,6 +115,8 @@ function handleCurrentImageChanged(params) {
     const isMarkdown = checkIfMarkdown(currentImage)
     const isText = checkIfText(currentImage)
     const isPdf = checkIfPdf(currentImage)
+    const isZip = checkIfZip(currentImage)
+    const isModel = checkIfModel(currentImage)
     
     result.propertiesToSet.isVideo = isVideo
     result.propertiesToSet.isGif = isGif
@@ -110,9 +124,11 @@ function handleCurrentImageChanged(params) {
     result.propertiesToSet.isMarkdown = isMarkdown
     result.propertiesToSet.isText = isText
     result.propertiesToSet.isPdf = isPdf
+    result.propertiesToSet.isZip = isZip
+    result.propertiesToSet.isModel = isModel
     
     // Restore default window size when loading audio, text, or PDF (these have no visual dimensions to match)
-    if ((isAudio || isText || isPdf) && matchMediaAspectRatio) {
+    if ((isAudio || isText || isPdf || isZip || isModel) && matchMediaAspectRatio) {
         result.actionsToPerform.push(() => {
             Qt.callLater(function() {
                 restoreDefaultWindowSize()
@@ -158,6 +174,10 @@ function handleCurrentImageChanged(params) {
         result.actionsToPerform.push(() => loadTextViewer())
     } else if (isPdf) {
         result.actionsToPerform.push(() => loadPdfViewer())
+    } else if (isZip) {
+        result.actionsToPerform.push(() => loadZipViewer())
+    } else if (isModel) {
+        result.actionsToPerform.push(() => loadModelViewer())
     } else {
         // Image (including GIF)
         result.actionsToPerform.push(() => loadImageViewer())
@@ -180,12 +200,18 @@ function handleCurrentImageChanged(params) {
     } else if (isPdf) {
         result.actionsToPerform.push(() => useFallbackAccent())
         result.actionsToPerform.push(() => startLoadTimer("PDF"))
+    } else if (isZip) {
+        result.actionsToPerform.push(() => useFallbackAccent())
+        result.actionsToPerform.push(() => startLoadTimer("ZIP"))
+    } else if (isModel) {
+        result.actionsToPerform.push(() => useFallbackAccent())
+        result.actionsToPerform.push(() => startLoadTimer("Model"))
     } else {
         // Images: keep previous color until new one is detected (smooth transition)
         result.actionsToPerform.push(() => startLoadTimer(isGif ? "GIF" : "Image"))
     }
     
-    if (!isVideo && !isAudio && !isMarkdown && !isText && !isPdf) {
+    if (!isVideo && !isAudio && !isMarkdown && !isText && !isPdf && !isZip && !isModel) {
         // Don't call updateAccentColor here - it's called async in onImageReady
         // Load all images from directory for navigation (only if not already navigating)
         if (!_navigatingImages) {
@@ -223,7 +249,7 @@ function handleCurrentImageChanged(params) {
                 getAudioFormatInfo(0) // Get sample rate only
             })
         })
-    } else if (isMarkdown || isText || isPdf) {
+    } else if (isMarkdown || isText || isPdf || isZip || isModel) {
         // Video and audio already stopped above, no need to stop again
     }
     

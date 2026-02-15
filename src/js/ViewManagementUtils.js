@@ -15,10 +15,12 @@
  * @param {boolean} isMarkdown - Whether current media is markdown
  * @param {boolean} isText - Whether current media is text
  * @param {boolean} isPdf - Whether current media is PDF
+ * @param {boolean} isZip - Whether current media is ZIP
+ * @param {boolean} isModel - Whether current media is 3D model
  * @returns {boolean} True if zoom was adjusted, false otherwise
  */
-function adjustZoom(delta, viewerItem, hasMedia, isVideo, isAudio, isMarkdown, isText, isPdf) {
-    if (!hasMedia || isVideo || isAudio || isMarkdown || isText || isPdf) {
+function adjustZoom(delta, viewerItem, hasMedia, isVideo, isAudio, isMarkdown, isText, isPdf, isZip, isModel) {
+    if (!hasMedia || isVideo || isAudio || isMarkdown || isText || isPdf || isZip || isModel) {
         return false
     }
     if (viewerItem && typeof viewerItem.adjustZoom === "function") {
@@ -36,10 +38,12 @@ function adjustZoom(delta, viewerItem, hasMedia, isVideo, isAudio, isMarkdown, i
  * @param {boolean} isMarkdown - Whether current media is markdown
  * @param {boolean} isText - Whether current media is text
  * @param {boolean} isPdf - Whether current media is PDF
+ * @param {boolean} isZip - Whether current media is ZIP
+ * @param {boolean} isModel - Whether current media is 3D model
  * @returns {boolean} True if view was reset, false otherwise
  */
-function resetView(viewerItem, isVideo, isAudio, isMarkdown, isText, isPdf) {
-    if (isVideo || isAudio || isMarkdown || isText || isPdf) {
+function resetView(viewerItem, isVideo, isAudio, isMarkdown, isText, isPdf, isZip, isModel) {
+    if (isVideo || isAudio || isMarkdown || isText || isPdf || isZip || isModel) {
         return false
     }
     if (viewerItem && typeof viewerItem.resetView === "function") {
@@ -58,10 +62,12 @@ function resetView(viewerItem, isVideo, isAudio, isMarkdown, isText, isPdf) {
  * @param {boolean} isMarkdown - Whether current media is markdown
  * @param {boolean} isText - Whether current media is text
  * @param {boolean} isPdf - Whether current media is PDF
+ * @param {boolean} isZip - Whether current media is ZIP
+ * @param {boolean} isModel - Whether current media is 3D model
  * @param {Object} window - Window object to set panX/panY to 0 if needed
  * @returns {boolean} True if pan was clamped, false otherwise
  */
-function clampPan(viewerItem, hasMedia, isVideo, isAudio, isMarkdown, isText, isPdf, window) {
+function clampPan(viewerItem, hasMedia, isVideo, isAudio, isMarkdown, isText, isPdf, isZip, isModel, window) {
     if (!hasMedia) {
         if (window) {
             window.panX = 0
@@ -70,8 +76,8 @@ function clampPan(viewerItem, hasMedia, isVideo, isAudio, isMarkdown, isText, is
         return false
     }
 
-    if (isVideo || isMarkdown || isText || isPdf) {
-        // Videos, markdown, text, and PDF don't need pan clamping
+    if (isVideo || isMarkdown || isText || isPdf || isZip || isModel) {
+        // Videos, markdown, text, PDF, ZIP, and models don't need pan clamping here
         if (window) {
             window.panX = 0
             window.panY = 0

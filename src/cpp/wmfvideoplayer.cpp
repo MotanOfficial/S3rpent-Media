@@ -22,7 +22,6 @@
 #include <QAudioOutput>
 #include <QElapsedTimer>
 #include <QRegularExpression>
-#include <QSettings>
 #include <QDateTime>
 #include <cmath>
 
@@ -48,10 +47,9 @@ WMFVideoPlayer::WMFVideoPlayer(QObject *parent)
     , m_lastSyncTime(0)
     , m_hasAudio(true)  // Default to true, will be updated during detection
 {
-    // Load saved volume from settings
-    QSettings settings;
-    m_volume = settings.value("video/volume", 1.0).toReal();
-    qDebug() << "[WMFVideoPlayer] Loaded saved volume:" << m_volume;
+    // Volume persistence is handled by QML Settings (video/volume).
+    // Keep WMF player runtime-only to avoid racing and overwriting persisted values.
+    qDebug() << "[WMFVideoPlayer] Initial volume:" << m_volume;
     
     // Setup QMediaPlayer for video (no audio - we use FFmpeg for that)
     setupMediaPlayer();
@@ -165,10 +163,6 @@ void WMFVideoPlayer::setVolume(qreal volume)
             m_audioSink->setVolume(m_volume);
         }
     }
-    
-    // Save volume to settings
-    QSettings settings;
-    settings.setValue("video/volume", m_volume);
     
     emit volumeChanged();
 }

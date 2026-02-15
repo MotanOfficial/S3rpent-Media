@@ -56,6 +56,8 @@ Item {
                 isMarkdown: appWindow.isMarkdown
                 isText: appWindow.isText
                 isPdf: appWindow.isPdf
+                isZip: appWindow.isZip
+                isModel: appWindow.isModel
                 isImageType: appWindow.isImageType
                 showImageControls: appWindow.showImageControls
                 videoPlayerLoader: _mediaViewerLoaders.videoPlayerLoader
@@ -83,6 +85,11 @@ Item {
                     }
                 }
                 onFileDropped: function(fileUrl) {
+                    // Ignore self-generated drag-out temp files/folders from ZIP panel.
+                    const dropped = fileUrl ? fileUrl.toString().replace(/\\/g, "/").toLowerCase() : ""
+                    if (dropped.indexOf("/s3rp3nt_media_zip_drag/") >= 0) {
+                        return
+                    }
                     appWindow.logToDebugConsole("[QML] File dropped, setting currentImage: " + fileUrl.toString(), "info")
                     // Ensure window is visible when dropping file
                     if (!appWindow.visible) {

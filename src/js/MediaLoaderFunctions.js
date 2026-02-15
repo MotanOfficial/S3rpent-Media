@@ -125,6 +125,26 @@ function unloadPdfViewer(params) {
     MediaLoaderUtils.unloadLoader(mediaViewerLoaders.pdfViewerLoader)
 }
 
+function loadZipViewer(params) {
+    const { mediaViewerLoaders, MediaLoaderUtils } = params
+    MediaLoaderUtils.forceReloadLoader(mediaViewerLoaders.zipViewerLoader)
+}
+
+function unloadZipViewer(params) {
+    const { mediaViewerLoaders, MediaLoaderUtils } = params
+    MediaLoaderUtils.unloadLoader(mediaViewerLoaders.zipViewerLoader)
+}
+
+function loadModelViewer(params) {
+    const { mediaViewerLoaders, MediaLoaderUtils } = params
+    MediaLoaderUtils.forceReloadLoader(mediaViewerLoaders.modelViewerLoader)
+}
+
+function unloadModelViewer(params) {
+    const { mediaViewerLoaders, MediaLoaderUtils } = params
+    MediaLoaderUtils.unloadLoader(mediaViewerLoaders.modelViewerLoader)
+}
+
 function unloadAllViewers(params) {
     unloadImageViewer(params)
     unloadVideoPlayer(params)
@@ -132,5 +152,7 @@ function unloadAllViewers(params) {
     unloadMarkdownViewer(params)
     unloadTextViewer(params)
     unloadPdfViewer(params)
+    unloadZipViewer(params)
+    unloadModelViewer(params)
 }
 

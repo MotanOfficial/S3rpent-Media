@@ -1,21 +1,23 @@
-# PowerShell script to build with MSVC
-# This script sets up the MSVC environment properly in PowerShell
+# PowerShell script to build FASTDEBUG (RelWithDebInfo) with MSVC
+# This build type provides Release performance with debug symbols for profiling
+# Perfect for media apps that need smooth playback but also need debugging
 
 $ErrorActionPreference = "Stop"
 
 $CMAKE_CMD = "C:\Qt\Tools\CMake_64\bin\cmake.exe"
 $PROJECT_DIR = "C:\Users\Motan\Documents\s3rp3nt_media"
-$BUILD_DIR = "C:\Users\Motan\Documents\s3rp3nt_media\build\Desktop_Qt_6_10_1_MSVC_64_bit-Debug"
-$BINARY = "$BUILD_DIR\Debug\apps3rp3nt_media.exe"
-$WINDEPLOYQT = "C:\Qt\6.10.1\msvc2022_64\bin\windeployqt.exe"
+$BUILD_DIR = "C:\Users\Motan\Documents\s3rp3nt_media\build\Desktop_Qt_6_10_2_MSVC_64_bit-FastDebug"
+$BINARY = "$BUILD_DIR\RelWithDebInfo\apps3rp3nt_media.exe"
+$WINDEPLOYQT = "C:\Qt\6.10.2\msvc2022_64\bin\windeployqt.exe"
 $VCPKG_ROOT = "C:\vcpkg"
 $VCPKG_EXE = "$VCPKG_ROOT\vcpkg.exe"
 $VCPKG_TRIPLET = "x64-windows"
 
-Write-Host "Setting up MSVC environment..." -ForegroundColor Cyan
+Write-Host "Setting up MSVC environment for FASTDEBUG build (RelWithDebInfo)..." -ForegroundColor Cyan
+Write-Host "This build provides Release performance with debug symbols" -ForegroundColor Yellow
 
 # Find and run vcvars64.bat
-# Only use Visual Studio 2022 with v143 toolset for Qt 6.10.1 compatibility
+# Only use Visual Studio 2022 with v143 toolset for Qt 6.10.2 compatibility
 $vcvarsPaths = @(
     "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat",
     "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat",
@@ -39,12 +41,12 @@ if (-not $vcvarsPath) {
 }
 
 Write-Host "Found Visual Studio 2022 at: $vcvarsPath" -ForegroundColor Green
-Write-Host "Using Visual Studio 2022 with v143 toolset for Qt 6.10.1 compatibility" -ForegroundColor Cyan
+Write-Host "Using Visual Studio 2022 with v143 toolset for Qt 6.10.2 compatibility" -ForegroundColor Cyan
 
 # Clear existing MSVC environment variables to avoid conflicts
 # This ensures we use the compiler from the vcvars64.bat we just found
 # Remove conflicting VS paths based on which VS we're using
-$msvcVars = @("VCINSTALLDIR", "VCToolsInstallDir", "VSCMD_ARG_app_plat", "VSCMD_ARG_TGT_ARCH", 
+$msvcVars = @("VCINSTALLDIR", "VCToolsInstallDir", "VSCMD_ARG_app_plat", "VSCMD_ARG_TGT_ARCH",
               "INCLUDE", "LIB", "LIBPATH", "PATH", "WindowsSdkDir", "WindowsSDKVersion")
 foreach ($var in $msvcVars) {
     $currentValue = [Environment]::GetEnvironmentVariable($var, "Process")
@@ -72,7 +74,7 @@ foreach ($var in $msvcVars) {
             # Using VS 2022 - remove VS 2025 (18) and VS 2019 paths
             $newValue = ($currentValue -split ';' | Where-Object { $_ -and $_ -notlike "*\18\*" -and $_ -notlike "*\2019\*" }) -join ';'
         }
-        
+
         if ($newValue -ne $currentValue) {
             [Environment]::SetEnvironmentVariable($var, $newValue, "Process")
         }
@@ -105,7 +107,7 @@ if (Test-Path $tempOutput) {
         if ($line -match '^([^=]+)=(.*)$') {
             $name = $matches[1]
             $value = $matches[2]
-            
+
             # Special handling for PATH - collect paths from vcvars64.bat first
             if ($name -eq "PATH") {
                 $pathParts = $value -split ';'
@@ -120,7 +122,7 @@ if (Test-Path $tempOutput) {
             }
         }
     }
-    
+
     # Set PATH with vcvars64.bat paths FIRST, then existing paths (excluding conflicting VS paths)
     $currentPath = [Environment]::GetEnvironmentVariable("PATH", "Process")
     if ($currentPath) {
@@ -132,18 +134,18 @@ if (Test-Path $tempOutput) {
             if ($part -like "*\18\*" -or $part -like "*\2019\*") {
                 $shouldSkip = $true
             }
-            
+
             if (-not $shouldSkip -and $vcvarsPathParts -notcontains $part) {
                 $otherPathParts += $part
             }
         }
     }
-    
+
     # Combine: vcvars64.bat paths first, then other paths
     $newPathParts = $vcvarsPathParts + $otherPathParts
     $newPath = $newPathParts -join ';'
     [Environment]::SetEnvironmentVariable("PATH", $newPath, "Process")
-    
+
     Remove-Item $tempOutput -ErrorAction SilentlyContinue
 }
 Remove-Item $tempBatch -ErrorAction SilentlyContinue
@@ -168,8 +170,8 @@ try {
 }
 
 # Set up Qt environment
-Write-Host "Setting up Qt 6.10.1 with MSVC..." -ForegroundColor Cyan
-$qtEnv = "C:\Qt\6.10.1\msvc2022_64\bin\qtenv2.bat"
+Write-Host "Setting up Qt 6.10.2 with MSVC..." -ForegroundColor Cyan
+$qtEnv = "C:\Qt\6.10.2\msvc2022_64\bin\qtenv2.bat"
 if (Test-Path $qtEnv) {
     $qtBatch = [System.IO.Path]::GetTempFileName() + ".bat"
     $qtOutput = [System.IO.Path]::GetTempFileName()
@@ -222,22 +224,22 @@ if (-not (Test-Path $BUILD_DIR)) {
 
 # Configure with CMake
 if (-not (Test-Path "$BUILD_DIR\CMakeCache.txt")) {
-    Write-Host "Configuring project with CMake (MSVC)..." -ForegroundColor Cyan
-    
-    # Always use Visual Studio 17 2022 generator with v143 toolset for Qt 6.10.1 compatibility
+    Write-Host "Configuring project with CMake (MSVC) for FASTDEBUG (RelWithDebInfo)..." -ForegroundColor Cyan
+
+    # Always use Visual Studio 17 2022 generator with v143 toolset for Qt 6.10.2 compatibility
     $vsGenerator = "Visual Studio 17 2022"
     $toolset = "v143"
-    
+
     Write-Host "Using generator: $vsGenerator with toolset: $toolset" -ForegroundColor Cyan
-    
+
     $cmakeArgs = @(
         "-S", $PROJECT_DIR,
         "-B", $BUILD_DIR,
         "-G", $vsGenerator,
         "-A", "x64",
         "-T", $toolset,
-        "-DCMAKE_BUILD_TYPE=Debug",
-        "-DCMAKE_PREFIX_PATH=C:/Qt/6.10.1/msvc2022_64",
+        "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
+        "-DCMAKE_PREFIX_PATH=C:/Qt/6.10.2/msvc2022_64",
         "-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
     )
     & $CMAKE_CMD $cmakeArgs
@@ -248,10 +250,11 @@ if (-not (Test-Path "$BUILD_DIR\CMakeCache.txt")) {
 }
 
 # Build
-Write-Host "`nBuilding Qt project with Qt 6.10.1 (MSVC)..." -ForegroundColor Cyan
+Write-Host "`nBuilding Qt project with Qt 6.10.2 (MSVC) - FASTDEBUG (RelWithDebInfo)..." -ForegroundColor Cyan
+Write-Host "This build will have Release performance with debug symbols" -ForegroundColor Yellow
 $buildArgs = @(
     "--build", $BUILD_DIR,
-    "--config", "Debug"
+    "--config", "RelWithDebInfo"
 )
 & $CMAKE_CMD $buildArgs
 
@@ -273,7 +276,7 @@ if (-not (Test-Path $BINARY)) {
     exit 1
 }
 
-& $WINDEPLOYQT --qmldir $PROJECT_DIR $BINARY
+& $WINDEPLOYQT --qmldir $PROJECT_DIR --release $BINARY
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Deployment failed." -ForegroundColor Red
@@ -281,10 +284,13 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "`n========================================" -ForegroundColor Green
-Write-Host "Build and deployment succeeded!" -ForegroundColor Green
+Write-Host "FASTDEBUG build and deployment succeeded!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
-Write-Host "Full Windows Media Session integration is now enabled!" -ForegroundColor Cyan
-Write-Host "- Custom metadata (title, artist, album, cover art) will be available" -ForegroundColor White
-Write-Host "- Keyboard play/pause controls will work" -ForegroundColor White
-Write-Host "- Windows apps like Wallpaper Engine can access the metadata" -ForegroundColor White
+Write-Host "Binary location: $BINARY" -ForegroundColor Cyan
+Write-Host "Build type: RelWithDebInfo (Release performance + debug symbols)" -ForegroundColor White
+Write-Host "`nBenefits:" -ForegroundColor Yellow
+Write-Host "  - Full Release optimizations (O2, aggressive inlining)" -ForegroundColor White
+Write-Host "  - Debug symbols (PDB) for stack traces and profiling" -ForegroundColor White
+Write-Host "  - Release CRT (no Debug CRT overhead)" -ForegroundColor White
+Write-Host "  - Perfect for media apps that need smooth playback + debugging" -ForegroundColor White
 

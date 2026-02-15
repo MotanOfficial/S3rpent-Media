@@ -464,11 +464,14 @@ Item {
                 ffmpegReady = false
             }
             
-            // Trigger reload by temporarily clearing and restoring source
-            var currentSource = source
+            // Trigger reload by temporarily clearing and restoring source.
+            // Keep an immutable copy to avoid restoring an emptied URL object.
+            const currentSource = source.toString()
             source = ""
             Qt.callLater(function() {
-                source = currentSource
+                if (videoPlayer.source === "" && currentSource !== "") {
+                    videoPlayer.source = currentSource
+                }
             })
         } else {
             // No video loaded, just reset ready flags

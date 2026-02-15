@@ -52,6 +52,9 @@
 #include "subtitleformatter.h"
 #include "mediaplayerwrapper.h"
 #include "embeddedsubtitleextractor.h"
+#include "ziparchivereader.h"
+#include "externaldraghelper.h"
+#include "modelsourceresolver.h"
 #include <oclero/qlementine/icons/QlementineIcons.hpp>
 
 // Constants
@@ -119,6 +122,9 @@ namespace {
         qmlRegisterType<SubtitleFormatter>("s3rp3nt_media", 1, 0, "SubtitleFormatter");
         qmlRegisterType<MediaPlayerWrapper>("s3rp3nt_media", 1, 0, "MediaPlayerWrapper");
         qmlRegisterType<EmbeddedSubtitleExtractor>("s3rp3nt_media", 1, 0, "EmbeddedSubtitleExtractor");
+        qmlRegisterType<ZipArchiveReader>("s3rp3nt_media", 1, 0, "ZipArchiveReader");
+        qmlRegisterType<ExternalDragHelper>("s3rp3nt_media", 1, 0, "ExternalDragHelper");
+        qmlRegisterType<ModelSourceResolver>("s3rp3nt_media", 1, 0, "ModelSourceResolver");
         
         // Register singletons (Qt 6 approach - no .qmldir needed)
         qmlRegisterSingletonInstance("s3rp3nt_media", 1, 0, "ColorUtils", &colorUtils);

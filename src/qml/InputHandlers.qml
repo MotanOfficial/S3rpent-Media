@@ -15,6 +15,8 @@ Item {
     property bool isMarkdown: false
     property bool isText: false
     property bool isPdf: false
+    property bool isZip: false
+    property bool isModel: false
     property bool isImageType: false
     property bool showImageControls: false
     property var videoPlayerLoader: null
@@ -42,7 +44,7 @@ Item {
             if (delta !== 0)
                 adjustZoomRequested(delta)
         }
-        enabled: currentImage.toString() !== "" && !isVideo && !isAudio && !isMarkdown && !isText && !isPdf
+        enabled: currentImage.toString() !== "" && !isVideo && !isAudio && !isMarkdown && !isText && !isPdf && !isZip && !isModel
     }
 
     TapHandler {
@@ -86,7 +88,7 @@ Item {
         property real prevY: 0
         target: null
         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad | PointerDevice.Stylus
-        enabled: currentImage.toString() !== "" && !isVideo && !isAudio && !isMarkdown && !isText && !isPdf
+        enabled: currentImage.toString() !== "" && !isVideo && !isAudio && !isMarkdown && !isText && !isPdf && !isZip && !isModel
         onActiveChanged: {
             prevX = translation.x
             prevY = translation.y

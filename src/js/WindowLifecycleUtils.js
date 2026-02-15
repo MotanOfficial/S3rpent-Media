@@ -121,6 +121,8 @@ function resetForReuse(window, unloadAllViewers, logToDebugConsole) {
     window.isMarkdown = false
     window.isText = false
     window.isPdf = false
+    window.isZip = false
+    window.isModel = false
     
     // Clear media properties
     window.directoryImages = []

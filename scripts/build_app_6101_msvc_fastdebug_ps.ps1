@@ -9,6 +9,9 @@ $PROJECT_DIR = "C:\Users\Motan\Documents\s3rp3nt_media"
 $BUILD_DIR = "C:\Users\Motan\Documents\s3rp3nt_media\build\Desktop_Qt_6_10_1_MSVC_64_bit-FastDebug"
 $BINARY = "$BUILD_DIR\RelWithDebInfo\apps3rp3nt_media.exe"
 $WINDEPLOYQT = "C:\Qt\6.10.1\msvc2022_64\bin\windeployqt.exe"
+$VCPKG_ROOT = "C:\vcpkg"
+$VCPKG_EXE = "$VCPKG_ROOT\vcpkg.exe"
+$VCPKG_TRIPLET = "x64-windows"
 
 Write-Host "Setting up MSVC environment for FASTDEBUG build (RelWithDebInfo)..." -ForegroundColor Cyan
 Write-Host "This build provides Release performance with debug symbols" -ForegroundColor Yellow
@@ -191,6 +194,19 @@ set > "$qtOutput"
         Remove-Item $qtOutput -ErrorAction SilentlyContinue
     }
     Remove-Item $qtBatch -ErrorAction SilentlyContinue
+}
+
+# Ensure libarchive is available for ZIP extraction backend
+Write-Host "Ensuring libarchive is installed via vcpkg..." -ForegroundColor Cyan
+if (-not (Test-Path $VCPKG_EXE)) {
+    Write-Host "ERROR: vcpkg not found at $VCPKG_EXE" -ForegroundColor Red
+    Write-Host "Install vcpkg or update script path before building." -ForegroundColor Yellow
+    exit 1
+}
+& $VCPKG_EXE @("install", "libarchive:$VCPKG_TRIPLET")
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Failed to install libarchive via vcpkg." -ForegroundColor Red
+    exit 1
 }
 
 # Handle --clean argument

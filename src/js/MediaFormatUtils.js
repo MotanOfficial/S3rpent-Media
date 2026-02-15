@@ -26,6 +26,8 @@ function formatTime(ms) {
  *   - isMarkdown: bool
  *   - isText: bool
  *   - isPdf: bool
+ *   - isZip: bool
+ *   - isModel: bool
  *   - zoomFactor: real
  *   - videoPlayer: object (videoPlayerLoader.item)
  *   - audioPlayer: object (audioPlayerLoader.item)
@@ -33,6 +35,8 @@ function formatTime(ms) {
  *   - markdownViewer: object (markdownViewerLoader.item)
  *   - textViewer: object (textViewerLoader.item)
  *   - pdfViewer: object (pdfViewerLoader.item)
+ *   - zipViewer: object (zipViewerLoader.item)
+ *   - modelViewer: object (modelViewerLoader.item)
  *   - audioFormatInfo: object ({ sampleRate, bitrate })
  *   - qsTr: function (translation function)
  *   - MediaMetaData: object (Qt MediaMetaData enum)
@@ -367,6 +371,32 @@ function getMetadataList(params) {
             list.push({ label: qsTr("Current Page"), value: params.pdfViewer.currentPage + " / " + params.pdfViewer.pageCount })
             list.push({ label: qsTr("Zoom"), value: Math.round(params.pdfViewer.zoomLevel * 100) + "%" })
         }
+    } else if (params.isZip) {
+        list.push({ label: qsTr("Media Type"), value: qsTr("ZIP Archive") })
+        if (params.zipViewer && params.zipViewer.displayFileName) {
+            list.push({ label: qsTr("Archive"), value: params.zipViewer.displayFileName })
+        }
+        if (params.zipViewer && params.zipViewer.archiveReader) {
+            list.push({ label: qsTr("Entries"), value: params.zipViewer.archiveReader.entries.length.toLocaleString() })
+            list.push({ label: qsTr("Files"), value: params.zipViewer.archiveReader.fileCount.toLocaleString() })
+            const total = params.zipViewer.archiveReader.totalUncompressedSize
+            const totalMb = (total / (1024 * 1024)).toFixed(2)
+            list.push({ label: qsTr("Uncompressed Size"), value: totalMb + " MB" })
+            if (!params.zipViewer.archiveReader.loaded && params.zipViewer.archiveReader.errorString) {
+                list.push({ label: qsTr("Status"), value: params.zipViewer.archiveReader.errorString })
+            }
+        }
+    } else if (params.isModel) {
+        list.push({ label: qsTr("Media Type"), value: qsTr("3D Model") })
+        if (params.modelViewer) {
+            list.push({ label: qsTr("Format Support"), value: params.modelViewer.modelSupported ? qsTr("Available") : qsTr("Unavailable") })
+            if (params.modelViewer.modelSupported) {
+                list.push({ label: qsTr("Load State"), value: params.modelViewer.modelLoaded ? qsTr("Loaded") : qsTr("Not Loaded") })
+            }
+            if (params.modelViewer.statusMessage) {
+                list.push({ label: qsTr("Status"), value: params.modelViewer.statusMessage })
+            }
+        }
     } else {
         list.push({ label: qsTr("Media Type"), value: qsTr("Image") })
         if (params.imageViewer && params.imageViewer.paintedWidth > 0 && params.imageViewer.paintedHeight > 0) {
@@ -379,7 +409,7 @@ function getMetadataList(params) {
     }
     
     // View info (only for visual media, excluding PDF which has its own zoom in metadata)
-    if (!params.isAudio && !params.isMarkdown && !params.isText && !params.isPdf) {
+    if (!params.isAudio && !params.isMarkdown && !params.isText && !params.isPdf && !params.isZip && !params.isModel) {
         list.push({ label: qsTr("Zoom Level"), value: (params.zoomFactor * 100).toFixed(1) + "%" })
     }
     

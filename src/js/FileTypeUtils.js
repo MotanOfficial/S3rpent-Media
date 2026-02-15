@@ -5,10 +5,23 @@
  * Utility functions for detecting file types based on URL/extension
  */
 
-function checkIfVideo(url) {
+function normalizedPath(url) {
     if (!url || url === "")
+        return ""
+    let path = url.toString().toLowerCase()
+    const queryIndex = path.indexOf("?")
+    if (queryIndex >= 0)
+        path = path.substring(0, queryIndex)
+    const hashIndex = path.indexOf("#")
+    if (hashIndex >= 0)
+        path = path.substring(0, hashIndex)
+    return path
+}
+
+function checkIfVideo(url) {
+    const path = normalizedPath(url)
+    if (path === "")
         return false
-    const path = url.toString().toLowerCase()
     // GIFs are images, not videos
     return path.endsWith(".mp4") || path.endsWith(".avi") || path.endsWith(".mov") ||
            path.endsWith(".mkv") || path.endsWith(".webm") || path.endsWith(".m4v") ||
@@ -17,16 +30,16 @@ function checkIfVideo(url) {
 }
 
 function checkIfGif(url) {
-    if (!url || url === "")
+    const path = normalizedPath(url)
+    if (path === "")
         return false
-    const path = url.toString().toLowerCase()
     return path.endsWith(".gif")
 }
 
 function checkIfAudio(url) {
-    if (!url || url === "")
+    const path = normalizedPath(url)
+    if (path === "")
         return false
-    const path = url.toString().toLowerCase()
     return path.endsWith(".mp3") || path.endsWith(".wav") || path.endsWith(".flac") ||
            path.endsWith(".ogg") || path.endsWith(".aac") || path.endsWith(".m4a") ||
            path.endsWith(".wma") || path.endsWith(".opus") || path.endsWith(".mp2") ||
@@ -34,17 +47,17 @@ function checkIfAudio(url) {
 }
 
 function checkIfMarkdown(url) {
-    if (!url || url === "")
+    const path = normalizedPath(url)
+    if (path === "")
         return false
-    const path = url.toString().toLowerCase()
     return path.endsWith(".md") || path.endsWith(".markdown") || path.endsWith(".mdown") ||
            path.endsWith(".mkd") || path.endsWith(".mkdn")
 }
 
 function checkIfText(url) {
-    if (!url || url === "")
+    const path = normalizedPath(url)
+    if (path === "")
         return false
-    const path = url.toString().toLowerCase()
     // Plain text
     if (path.endsWith(".txt") || path.endsWith(".log") || path.endsWith(".nfo"))
         return true
@@ -146,9 +159,24 @@ function checkIfText(url) {
 }
 
 function checkIfPdf(url) {
-    if (!url || url === "")
+    const path = normalizedPath(url)
+    if (path === "")
         return false
-    const path = url.toString().toLowerCase()
     return path.endsWith(".pdf")
+}
+
+function checkIfZip(url) {
+    const path = normalizedPath(url)
+    if (path === "")
+        return false
+    return path.endsWith(".zip")
+}
+
+function checkIfModel(url) {
+    const path = normalizedPath(url)
+    if (path === "")
+        return false
+    return path.endsWith(".obj") || path.endsWith(".fbx") || path.endsWith(".glb") ||
+           path.endsWith(".mtl") || path.endsWith(".blend")
 }
 
