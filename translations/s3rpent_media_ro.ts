@@ -16,8 +16,8 @@
         <translation>Asocieri de fișiere</translation>
     </message>
     <message>
-        <source>Set S3rp3nt Media as your default app for opening images and other media files.</source>
-        <translation>Setează S3rp3nt Media ca aplicație implicită pentru deschiderea imaginilor și altor fișiere media.</translation>
+        <source>Set S3rpent Media as your default app for opening images and other media files.</source>
+        <translation>Setează S3rpent Media ca aplicație implicită pentru deschiderea imaginilor și altor fișiere media.</translation>
     </message>
     <message>
         <source>Set as Default for Images</source>
@@ -28,8 +28,8 @@
         <translation>Setări Windows</translation>
     </message>
     <message>
-        <source>This will register the app and open Windows Settings where you can select S3rp3nt Media as your default image viewer.</source>
-        <translation>Aceasta va înregistra aplicația și va deschide Setările Windows unde poți selecta S3rp3nt Media ca vizualizator de imagini implicit.</translation>
+        <source>This will register the app and open Windows Settings where you can select S3rpent Media as your default image viewer.</source>
+        <translation>Aceasta va înregistra aplicația și va deschide Setările Windows unde poți selecta S3rpent Media ca vizualizator de imagini implicit.</translation>
     </message>
     <message>
         <source>Appearance</source>
@@ -131,8 +131,8 @@
 <context>
     <name>Main</name>
     <message>
-        <source>s3rp3nt media · Media Viewer</source>
-        <translation>s3rp3nt media · Vizualizator Media</translation>
+        <source>s3rpent media · Media Viewer</source>
+        <translation>s3rpent media · Vizualizator Media</translation>
     </message>
     <message>
         <source>Drag &amp; drop media\nor press Ctrl+O</source>

@@ -1,6 +1,6 @@
 # FFmpeg Library Setup Guide
 
-This guide explains how to install FFmpeg libraries for **fast subtitle extraction** in s3rp3nt_media.
+This guide explains how to install FFmpeg libraries for **fast subtitle extraction** in s3rpent_media.
 
 ## Why FFmpeg Libraries?
 

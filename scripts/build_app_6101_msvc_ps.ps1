@@ -4,9 +4,9 @@
 $ErrorActionPreference = "Stop"
 
 $CMAKE_CMD = "C:\Qt\Tools\CMake_64\bin\cmake.exe"
-$PROJECT_DIR = "C:\Users\Motan\Documents\s3rp3nt_media"
-$BUILD_DIR = "C:\Users\Motan\Documents\s3rp3nt_media\build\Desktop_Qt_6_10_1_MSVC_64_bit-Debug"
-$BINARY = "$BUILD_DIR\Debug\apps3rp3nt_media.exe"
+$PROJECT_DIR = "C:\Users\Motan\Documents\s3rpent_media"
+$BUILD_DIR = "C:\Users\Motan\Documents\s3rpent_media\build\Desktop_Qt_6_10_1_MSVC_64_bit-Debug"
+$BINARY = "$BUILD_DIR\Debug\apps3rpent_media.exe"
 $WINDEPLOYQT = "C:\Qt\6.10.1\msvc2022_64\bin\windeployqt.exe"
 $VCPKG_ROOT = "C:\vcpkg"
 $VCPKG_EXE = "$VCPKG_ROOT\vcpkg.exe"

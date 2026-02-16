@@ -273,7 +273,7 @@ QQuickWindow* WindowManager::createNewWindow(const QUrl &fileUrl)
     
     // Create component from the shared engine using module system
     QQmlComponent component(m_engine);
-    component.loadFromModule("s3rp3nt_media", "Main");
+    component.loadFromModule("s3rpent_media", "Main");
     
     if (component.isError()) {
         qWarning() << "Failed to load Main.qml component:" << component.errorString();

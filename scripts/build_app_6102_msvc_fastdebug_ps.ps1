@@ -5,13 +5,32 @@
 $ErrorActionPreference = "Stop"
 
 $CMAKE_CMD = "C:\Qt\Tools\CMake_64\bin\cmake.exe"
-$PROJECT_DIR = "C:\Users\Motan\Documents\s3rp3nt_media"
-$BUILD_DIR = "C:\Users\Motan\Documents\s3rp3nt_media\build\Desktop_Qt_6_10_2_MSVC_64_bit-FastDebug"
-$BINARY = "$BUILD_DIR\RelWithDebInfo\apps3rp3nt_media.exe"
+$SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
+$PROJECT_DIR = (Resolve-Path (Join-Path $SCRIPT_DIR "..")).Path
+$BUILD_DIR = Join-Path $PROJECT_DIR "build\Desktop_Qt_6_10_2_MSVC_64_bit-FastDebug"
+$BINARY = Join-Path $BUILD_DIR "RelWithDebInfo\apps3rpent_media.exe"
+$APP_EXE_NAME = "apps3rpent_media.exe"
 $WINDEPLOYQT = "C:\Qt\6.10.2\msvc2022_64\bin\windeployqt.exe"
 $VCPKG_ROOT = "C:\vcpkg"
 $VCPKG_EXE = "$VCPKG_ROOT\vcpkg.exe"
 $VCPKG_TRIPLET = "x64-windows"
+
+function Normalize-PathForCompare {
+    param([string]$PathValue)
+
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        return ""
+    }
+
+    $normalized = $PathValue.Replace('/', '\').Trim()
+    try {
+        $normalized = [System.IO.Path]::GetFullPath($normalized)
+    } catch {
+        # Keep the best-effort normalized value when full resolution fails.
+    }
+
+    return $normalized.TrimEnd('\').ToLowerInvariant()
+}
 
 Write-Host "Setting up MSVC environment for FASTDEBUG build (RelWithDebInfo)..." -ForegroundColor Cyan
 Write-Host "This build provides Release performance with debug symbols" -ForegroundColor Yellow
@@ -222,31 +241,54 @@ if (-not (Test-Path $BUILD_DIR)) {
     New-Item -ItemType Directory -Path $BUILD_DIR | Out-Null
 }
 
-# Configure with CMake
-if (-not (Test-Path "$BUILD_DIR\CMakeCache.txt")) {
-    Write-Host "Configuring project with CMake (MSVC) for FASTDEBUG (RelWithDebInfo)..." -ForegroundColor Cyan
+# Validate CMake cache and clean if it points to a different source/build tree
+$cachePath = Join-Path $BUILD_DIR "CMakeCache.txt"
+if (Test-Path $cachePath) {
+    $cacheLines = Get-Content $cachePath
+    $cacheBuildDir = ($cacheLines | Select-String '^CMAKE_CACHEFILE_DIR:INTERNAL=(.*)$' | ForEach-Object { $_.Matches[0].Groups[1].Value } | Select-Object -First 1)
+    $cacheSourceDir = ($cacheLines | Select-String '^CMAKE_HOME_DIRECTORY:INTERNAL=(.*)$' | ForEach-Object { $_.Matches[0].Groups[1].Value } | Select-Object -First 1)
 
-    # Always use Visual Studio 17 2022 generator with v143 toolset for Qt 6.10.2 compatibility
-    $vsGenerator = "Visual Studio 17 2022"
-    $toolset = "v143"
+    $normalizedExpectedBuildDir = Normalize-PathForCompare $BUILD_DIR
+    $normalizedExpectedSourceDir = Normalize-PathForCompare $PROJECT_DIR
+    $normalizedCacheBuildDir = Normalize-PathForCompare $cacheBuildDir
+    $normalizedCacheSourceDir = Normalize-PathForCompare $cacheSourceDir
 
-    Write-Host "Using generator: $vsGenerator with toolset: $toolset" -ForegroundColor Cyan
+    if (($normalizedCacheBuildDir -and $normalizedCacheBuildDir -ne $normalizedExpectedBuildDir) -or
+        ($normalizedCacheSourceDir -and $normalizedCacheSourceDir -ne $normalizedExpectedSourceDir)) {
+        Write-Host "Detected stale CMake cache from a different path. Recreating build directory..." -ForegroundColor Yellow
+        Write-Host "  Cached build dir : $cacheBuildDir" -ForegroundColor DarkYellow
+        Write-Host "  Expected build dir: $BUILD_DIR" -ForegroundColor DarkYellow
+        Write-Host "  Cached source dir : $cacheSourceDir" -ForegroundColor DarkYellow
+        Write-Host "  Expected source dir: $PROJECT_DIR" -ForegroundColor DarkYellow
 
-    $cmakeArgs = @(
-        "-S", $PROJECT_DIR,
-        "-B", $BUILD_DIR,
-        "-G", $vsGenerator,
-        "-A", "x64",
-        "-T", $toolset,
-        "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
-        "-DCMAKE_PREFIX_PATH=C:/Qt/6.10.2/msvc2022_64",
-        "-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
-    )
-    & $CMAKE_CMD $cmakeArgs
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "CMake configuration failed." -ForegroundColor Red
-        exit 1
+        Remove-Item $BUILD_DIR -Recurse -Force
+        New-Item -ItemType Directory -Path $BUILD_DIR | Out-Null
     }
+}
+
+# Configure with CMake (always run to keep cache/settings in sync)
+Write-Host "Configuring project with CMake (MSVC) for FASTDEBUG (RelWithDebInfo)..." -ForegroundColor Cyan
+
+# Always use Visual Studio 17 2022 generator with v143 toolset for Qt 6.10.2 compatibility
+$vsGenerator = "Visual Studio 17 2022"
+$toolset = "v143"
+
+Write-Host "Using generator: $vsGenerator with toolset: $toolset" -ForegroundColor Cyan
+
+$cmakeArgs = @(
+    "-S", $PROJECT_DIR,
+    "-B", $BUILD_DIR,
+    "-G", $vsGenerator,
+    "-A", "x64",
+    "-T", $toolset,
+    "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
+    "-DCMAKE_PREFIX_PATH=C:/Qt/6.10.2/msvc2022_64",
+    "-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+)
+& $CMAKE_CMD $cmakeArgs
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "CMake configuration failed." -ForegroundColor Red
+    exit 1
 }
 
 # Build
@@ -264,6 +306,18 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Build succeeded!" -ForegroundColor Green
+
+# Resolve the built binary path after build
+$expectedBinary = Join-Path $BUILD_DIR "RelWithDebInfo\$APP_EXE_NAME"
+if (Test-Path $expectedBinary) {
+    $BINARY = $expectedBinary
+} else {
+    $candidateBinaries = @(Get-ChildItem -Path (Join-Path $BUILD_DIR "RelWithDebInfo") -Filter "app*.exe" -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
+    if ($candidateBinaries.Count -gt 0) {
+        $BINARY = $candidateBinaries[0].FullName
+        Write-Host "Expected binary name not found; using detected binary: $BINARY" -ForegroundColor Yellow
+    }
+}
 
 # Deploy
 Write-Host "Running windeployqt..." -ForegroundColor Cyan

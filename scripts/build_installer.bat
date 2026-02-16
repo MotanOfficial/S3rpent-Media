@@ -2,13 +2,13 @@
 setlocal EnableDelayedExpansion
 
 REM ========================================
-REM   S3rp3nt Media - Installer Builder
+REM   S3rpent Media - Installer Builder
 REM ========================================
 
-set "PROJECT_DIR=C:\Users\Motan\Documents\s3rp3nt_media"
+set "PROJECT_DIR=C:\Users\Motan\Documents\s3rpent_media"
 set "RELEASE_DIR=%PROJECT_DIR%\build\Release"
 set "INSTALLER_DIR=%PROJECT_DIR%\installer"
-set "PACKAGE_DATA=%INSTALLER_DIR%\packages\com.s3rp3nt.media\data"
+set "PACKAGE_DATA=%INSTALLER_DIR%\packages\com.s3rpent.media\data"
 set "OUTPUT_DIR=%PROJECT_DIR%\dist"
 
 REM Qt Installer Framework path
@@ -16,7 +16,7 @@ set "IFW_DIR=C:\Qt\Tools\QtInstallerFramework\4.10"
 set "BINARYCREATOR=%IFW_DIR%\bin\binarycreator.exe"
 
 echo ========================================
-echo   S3rp3nt Media - Installer Builder
+echo   S3rpent Media - Installer Builder
 echo ========================================
 echo.
 
@@ -57,11 +57,11 @@ echo Using Qt Installer Framework: %IFW_DIR%
 echo.
 
 REM Check if release build exists
-if not exist "%RELEASE_DIR%\apps3rp3nt_media.exe" (
+if not exist "%RELEASE_DIR%\apps3rpent_media.exe" (
     echo ERROR: Release build not found!
     echo.
     echo Please run build_release.bat first to create the release build.
-    echo Expected location: %RELEASE_DIR%\apps3rp3nt_media.exe
+    echo Expected location: %RELEASE_DIR%\apps3rpent_media.exe
     goto :END
 )
 
@@ -99,7 +99,7 @@ echo   Creating Installer...
 echo ========================================
 echo.
 
-set "INSTALLER_NAME=S3rp3nt_Media_Setup"
+set "INSTALLER_NAME=S3rpent_Media_Setup"
 set "INSTALLER_PATH=%OUTPUT_DIR%\%INSTALLER_NAME%.exe"
 
 REM Remove old installer if exists

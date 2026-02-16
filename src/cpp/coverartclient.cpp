@@ -64,7 +64,7 @@ void CoverArtClient::searchMusicBrainz(const QString &trackName, const QString &
 
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, 
-                     "s3rp3nt_media/0.1 (https://github.com/s3rp3nt/s3rp3nt_media)");
+                     "s3rpent_media/0.1 (https://github.com/s3rpent/s3rpent_media)");
     request.setRawHeader("Accept", "application/json");
 
     qDebug() << "[CoverArt] Searching MusicBrainz for:" << trackName << "-" << artistName;
@@ -93,7 +93,7 @@ void CoverArtClient::fetchFromCoverArtArchive(const QString &mbid, bool isReleas
     QUrl url(endpoint);
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, 
-                     "s3rp3nt_media/0.1 (https://github.com/s3rp3nt/s3rp3nt_media)");
+                     "s3rpent_media/0.1 (https://github.com/s3rpent/s3rpent_media)");
 
     qDebug() << "[CoverArt] Fetching from Cover Art Archive:" << endpoint;
     

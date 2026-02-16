@@ -951,7 +951,7 @@ QUrl ColorUtils::fixVideoFile(const QUrl &videoUrl) const
     QFileInfo fileInfo(localPath);
     QString baseName = fileInfo.completeBaseName();
     QString tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-    QString tempPath = tempDir + "/s3rp3nt_fixed_" + baseName + "_" + QString::number(QDateTime::currentMSecsSinceEpoch()) + ".mp4";
+    QString tempPath = tempDir + "/s3rpent_fixed_" + baseName + "_" + QString::number(QDateTime::currentMSecsSinceEpoch()) + ".mp4";
     
     qDebug() << "[VideoFix] Starting video fix process...";
     qDebug() << "[VideoFix] Input:" << localPath;
@@ -1126,8 +1126,8 @@ bool ColorUtils::registerAsDefaultImageViewer() const
     QString appPath = QCoreApplication::applicationFilePath().replace("/", "\\");
     
     // appName MUST match the executable name for Windows to find it
-    QString appName = QFileInfo(appPath).baseName();  // e.g. "apps3rp3nt_media"
-    QString friendlyName = "S3rp3nt Media Viewer";
+    QString appName = QFileInfo(appPath).baseName();  // e.g. "apps3rpent_media"
+    QString friendlyName = "S3rpent Media Viewer";
     
     // Define all supported file types organized by category
     QStringList imageExtensions = {
@@ -1186,7 +1186,7 @@ bool ColorUtils::registerAsDefaultImageViewer() const
     // 2. Register Capabilities (path must match RegisteredApplications entry)
     QSettings caps("HKEY_CURRENT_USER\\Software\\" + appName + "\\Capabilities", QSettings::NativeFormat);
     caps.setValue("ApplicationName", friendlyName);
-    caps.setValue("ApplicationDescription", "S3rp3nt Media Viewer - A modern viewer for images, videos, audio, and documents");
+    caps.setValue("ApplicationDescription", "S3rpent Media Viewer - A modern viewer for images, videos, audio, and documents");
     
     // Register file associations by category
     for (const QString &ext : imageExtensions) {

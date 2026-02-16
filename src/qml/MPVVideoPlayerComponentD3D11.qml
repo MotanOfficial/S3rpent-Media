@@ -1,10 +1,10 @@
 import QtQuick
-import s3rp3nt_media 1.0 as S3rp3ntMedia
+import s3rpent_media 1.0 as S3rpentMedia
 
 // D3D11-based MPV Video Player Component
 // This component uses D3D11 renderer instead of OpenGL
 // Only loaded if MPVVideoPlayerD3D11 type exists
-S3rp3ntMedia.MPVVideoPlayerD3D11 {
+S3rpentMedia.MPVVideoPlayerD3D11 {
     id: mpvPlayerInstanceD3D11
     // source will be set by the Loader's onItemChanged
     

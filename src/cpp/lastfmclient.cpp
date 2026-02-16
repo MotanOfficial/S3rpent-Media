@@ -71,7 +71,7 @@ void LastFMClient::fetchCoverArt(const QString &trackName, const QString &artist
 
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, 
-                     "s3rp3nt_media/0.1 (https://github.com/s3rp3nt/s3rp3nt_media)");
+                     "s3rpent_media/0.1 (https://github.com/s3rpent/s3rpent_media)");
 
     qDebug() << "[LastFM] Step 1: Fetching track.getInfo from Last.fm API:" << url.toString();
 
@@ -238,7 +238,7 @@ void LastFMClient::searchTrack(const QString &trackName, const QString &artistNa
 
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, 
-                     "s3rp3nt_media/0.1 (https://github.com/s3rp3nt/s3rp3nt_media)");
+                     "s3rpent_media/0.1 (https://github.com/s3rpent/s3rpent_media)");
 
     qDebug() << "[LastFM] Step 2: Searching tracks from Last.fm API:" << url.toString();
 
@@ -364,7 +364,7 @@ void LastFMClient::fetchAlbumInfo(const QString &artistName, const QString &albu
 
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, 
-                     "s3rp3nt_media/0.1 (https://github.com/s3rp3nt/s3rp3nt_media)");
+                     "s3rpent_media/0.1 (https://github.com/s3rpent/s3rpent_media)");
 
     qDebug() << "[LastFM] Step 3: Fetching album.getInfo from Last.fm API:" << url.toString();
 
@@ -393,7 +393,7 @@ void LastFMClient::searchAlbum(const QString &artistName, const QString &albumNa
 
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, 
-                     "s3rp3nt_media/0.1 (https://github.com/s3rp3nt/s3rp3nt_media)");
+                     "s3rpent_media/0.1 (https://github.com/s3rpent/s3rpent_media)");
 
     qDebug() << "[LastFM] Step 3b: Searching albums from Last.fm API:" << url.toString();
 

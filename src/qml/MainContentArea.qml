@@ -87,7 +87,7 @@ Item {
                 onFileDropped: function(fileUrl) {
                     // Ignore self-generated drag-out temp files/folders from ZIP panel.
                     const dropped = fileUrl ? fileUrl.toString().replace(/\\/g, "/").toLowerCase() : ""
-                    if (dropped.indexOf("/s3rp3nt_media_zip_drag/") >= 0) {
+                    if (dropped.indexOf("/s3rpent_media_zip_drag/") >= 0) {
                         return
                     }
                     appWindow.logToDebugConsole("[QML] File dropped, setting currentImage: " + fileUrl.toString(), "info")

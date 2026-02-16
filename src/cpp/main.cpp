@@ -84,51 +84,51 @@ namespace {
     void registerQmlTypes(QQmlApplicationEngine &engine, ColorUtils &colorUtils, SingleInstanceManager &instanceManager)
     {
         // Register types
-        qmlRegisterType<WMFVideoPlayer>("s3rp3nt_media", 1, 0, "WMFVideoPlayer");
+        qmlRegisterType<WMFVideoPlayer>("s3rpent_media", 1, 0, "WMFVideoPlayer");
 #ifdef HAS_LIBMPV
         if (MPVVideoPlayer::isAvailable()) {
-            qmlRegisterType<MPVVideoPlayer>("s3rp3nt_media", 1, 0, "MPVVideoPlayer");
+            qmlRegisterType<MPVVideoPlayer>("s3rpent_media", 1, 0, "MPVVideoPlayer");
             // TEMPORARILY DISABLED: Register mpv widget container for QML embedding (mpc-qt style)
             // This uses QOpenGLWidget internally, which is the ONLY approach that works in Qt 6
-            // qmlRegisterType<MPVQmlItem>("s3rp3nt_media", 1, 0, "MPVVideoWidget");
+            // qmlRegisterType<MPVQmlItem>("s3rpent_media", 1, 0, "MPVVideoWidget");
             // QQuickFramebufferObject approach (minimal, clean implementation following strict rules)
-            qmlRegisterType<MPVVideoItem>("s3rp3nt_media", 1, 0, "MPVVideoItem");
+            qmlRegisterType<MPVVideoItem>("s3rpent_media", 1, 0, "MPVVideoItem");
         }
         // Register D3D11-based mpv renderer
         /*
         if (MPVVideoPlayerD3D11::isAvailable()) {
-            qmlRegisterType<MPVVideoPlayerD3D11>("s3rp3nt_media", 1, 0, "MPVVideoPlayerD3D11");
-            qmlRegisterType<MPVVideoItemD3D11>("s3rp3nt_media", 1, 0, "MPVVideoItemD3D11");
+            qmlRegisterType<MPVVideoPlayerD3D11>("s3rpent_media", 1, 0, "MPVVideoPlayerD3D11");
+            qmlRegisterType<MPVVideoItemD3D11>("s3rpent_media", 1, 0, "MPVVideoItemD3D11");
         }
         */
 #endif
 #ifdef HAS_LIBVLC
-        qmlRegisterType<VLCVideoPlayer>("s3rp3nt_media", 1, 0, "VLCVideoPlayer");
-        qmlRegisterType<VLCVideoItem>("s3rp3nt_media", 1, 0, "VLCVideoItem");
+        qmlRegisterType<VLCVideoPlayer>("s3rpent_media", 1, 0, "VLCVideoPlayer");
+        qmlRegisterType<VLCVideoItem>("s3rpent_media", 1, 0, "VLCVideoItem");
 #endif
-        qmlRegisterType<FFmpegVideoPlayer>("s3rp3nt_media", 1, 0, "FFmpegVideoPlayer");
-        qmlRegisterType<FFmpegVideoRenderer>("s3rp3nt_media", 1, 0, "FFmpegVideoRenderer");
-        qmlRegisterType<LRCLibClient>("s3rp3nt_media", 1, 0, "LRCLibClient");
-        qmlRegisterType<LyricsTranslationClient>("s3rp3nt_media", 1, 0, "LyricsTranslationClient");
-        qmlRegisterType<AudioVisualizer>("s3rp3nt_media", 1, 0, "AudioVisualizer");
-        qmlRegisterType<AudioEqualizer>("s3rp3nt_media", 1, 0, "AudioEqualizer");
-        qmlRegisterType<CustomAudioPlayer>("s3rp3nt_media", 1, 0, "CustomAudioPlayer");
-        qmlRegisterType<DiscordRPC>("s3rp3nt_media", 1, 0, "DiscordRPC");
-        qmlRegisterType<SingleInstanceManager>("s3rp3nt_media", 1, 0, "SingleInstanceManager");
-        qmlRegisterType<WindowsMediaSession>("s3rp3nt_media", 1, 0, "WindowsMediaSession");
-        qmlRegisterType<CoverArtClient>("s3rp3nt_media", 1, 0, "CoverArtClient");
-        qmlRegisterType<LastFMClient>("s3rp3nt_media", 1, 0, "LastFMClient");
-        qmlRegisterType<WindowFrameHelper>("s3rp3nt_media", 1, 0, "WindowFrameHelper");
-        qmlRegisterType<SubtitleFormatter>("s3rp3nt_media", 1, 0, "SubtitleFormatter");
-        qmlRegisterType<MediaPlayerWrapper>("s3rp3nt_media", 1, 0, "MediaPlayerWrapper");
-        qmlRegisterType<EmbeddedSubtitleExtractor>("s3rp3nt_media", 1, 0, "EmbeddedSubtitleExtractor");
-        qmlRegisterType<ZipArchiveReader>("s3rp3nt_media", 1, 0, "ZipArchiveReader");
-        qmlRegisterType<ExternalDragHelper>("s3rp3nt_media", 1, 0, "ExternalDragHelper");
-        qmlRegisterType<ModelSourceResolver>("s3rp3nt_media", 1, 0, "ModelSourceResolver");
+        qmlRegisterType<FFmpegVideoPlayer>("s3rpent_media", 1, 0, "FFmpegVideoPlayer");
+        qmlRegisterType<FFmpegVideoRenderer>("s3rpent_media", 1, 0, "FFmpegVideoRenderer");
+        qmlRegisterType<LRCLibClient>("s3rpent_media", 1, 0, "LRCLibClient");
+        qmlRegisterType<LyricsTranslationClient>("s3rpent_media", 1, 0, "LyricsTranslationClient");
+        qmlRegisterType<AudioVisualizer>("s3rpent_media", 1, 0, "AudioVisualizer");
+        qmlRegisterType<AudioEqualizer>("s3rpent_media", 1, 0, "AudioEqualizer");
+        qmlRegisterType<CustomAudioPlayer>("s3rpent_media", 1, 0, "CustomAudioPlayer");
+        qmlRegisterType<DiscordRPC>("s3rpent_media", 1, 0, "DiscordRPC");
+        qmlRegisterType<SingleInstanceManager>("s3rpent_media", 1, 0, "SingleInstanceManager");
+        qmlRegisterType<WindowsMediaSession>("s3rpent_media", 1, 0, "WindowsMediaSession");
+        qmlRegisterType<CoverArtClient>("s3rpent_media", 1, 0, "CoverArtClient");
+        qmlRegisterType<LastFMClient>("s3rpent_media", 1, 0, "LastFMClient");
+        qmlRegisterType<WindowFrameHelper>("s3rpent_media", 1, 0, "WindowFrameHelper");
+        qmlRegisterType<SubtitleFormatter>("s3rpent_media", 1, 0, "SubtitleFormatter");
+        qmlRegisterType<MediaPlayerWrapper>("s3rpent_media", 1, 0, "MediaPlayerWrapper");
+        qmlRegisterType<EmbeddedSubtitleExtractor>("s3rpent_media", 1, 0, "EmbeddedSubtitleExtractor");
+        qmlRegisterType<ZipArchiveReader>("s3rpent_media", 1, 0, "ZipArchiveReader");
+        qmlRegisterType<ExternalDragHelper>("s3rpent_media", 1, 0, "ExternalDragHelper");
+        qmlRegisterType<ModelSourceResolver>("s3rpent_media", 1, 0, "ModelSourceResolver");
         
         // Register singletons (Qt 6 approach - no .qmldir needed)
-        qmlRegisterSingletonInstance("s3rp3nt_media", 1, 0, "ColorUtils", &colorUtils);
-        qmlRegisterSingletonInstance("s3rp3nt_media", 1, 0, "InstanceManager", &instanceManager);
+        qmlRegisterSingletonInstance("s3rpent_media", 1, 0, "ColorUtils", &colorUtils);
+        qmlRegisterSingletonInstance("s3rpent_media", 1, 0, "InstanceManager", &instanceManager);
     }
     
     // Extract file paths from command line arguments (supports multiple files)
@@ -152,9 +152,9 @@ namespace {
 // Initialize application settings
 void initApplication(QApplication &app)
 {
-    app.setOrganizationName("s3rp3nt");
-    app.setOrganizationDomain("s3rp3nt.media");
-    app.setApplicationName("s3rp3nt_media");
+    app.setOrganizationName("s3rpent");
+    app.setOrganizationDomain("s3rpent.media");
+    app.setApplicationName("s3rpent_media");
     app.setQuitOnLastWindowClosed(false);
 }
 
@@ -168,7 +168,7 @@ QTranslator* loadTranslation(QApplication &app, const QString &languageCode)
     
     QTranslator *translator = new QTranslator(&app);
     
-    QString translationFile = QString("s3rp3nt_media_%1").arg(languageCode);
+    QString translationFile = QString("s3rpent_media_%1").arg(languageCode);
     
     // Try to load from resources (qt_add_translations adds them to :/i18n by default)
     if (translator->load(translationFile, ":/i18n")) {
@@ -412,7 +412,7 @@ namespace {
 QObject* createDebugConsole(QQmlApplicationEngine &engine, QObject *rootObject)
 {
     QQmlComponent debugComponent(&engine);
-    debugComponent.loadFromModule("s3rp3nt_media", "DebugConsole");
+    debugComponent.loadFromModule("s3rpent_media", "DebugConsole");
     if (!debugComponent.isReady()) {
         qWarning() << "Debug console component not ready";
         logComponentErrors(debugComponent, "  ");
@@ -452,7 +452,7 @@ QObject* loadMainWindow(QQmlApplicationEngine &engine)
         []() { QCoreApplication::exit(-1); },
         Qt::QueuedConnection);
     
-    engine.loadFromModule("s3rp3nt_media", "Main");
+    engine.loadFromModule("s3rpent_media", "Main");
     
     if (engine.rootObjects().isEmpty()) {
         qCritical() << "Failed to load main window - check QML errors above";
@@ -501,14 +501,20 @@ int main(int argc, char *argv[])
     // 5. Call initApplication() (which will set the same org/app name, but that's fine)
     
     // Set organization/application name for QSettings (must be before reading settings)
-    QCoreApplication::setOrganizationName("s3rp3nt");
-    QCoreApplication::setOrganizationDomain("s3rp3nt.media");
-    QCoreApplication::setApplicationName("s3rp3nt_media");
+    QCoreApplication::setOrganizationName("s3rpent");
+    QCoreApplication::setOrganizationDomain("s3rpent.media");
+    QCoreApplication::setApplicationName("s3rpent_media");
     
-    // Check settings to determine which renderer mode to use
+    // Check settings to determine which Qt scenegraph backend to use.
+    // Default behavior:
+    // - Direct3D11 for normal app startup on Windows
+    // - OpenGL only when libmpv backend is selected (libmpv renderer requires it)
     QSettings settings;
     settings.beginGroup("video");
+    const QString videoBackend = settings.value("videoBackend", "mediaplayer").toString();
     QString mpvRendererMode = settings.value("mpvRendererMode", "opengl").toString();
+    const bool forceOpenGLForMpv = (videoBackend == "libmpv");
+    qDebug() << "[Main] Reading videoBackend from settings:" << videoBackend;
     qDebug() << "[Main] Reading mpvRendererMode from settings:" << mpvRendererMode;
     qDebug() << "[Main] All video settings keys:" << settings.allKeys();
     settings.endGroup();
@@ -519,24 +525,19 @@ int main(int argc, char *argv[])
     settings.endGroup();
     qDebug() << "[Main] Debug console enabled:" << debugConsoleEnabled;
     
-    // Only force OpenGL if OpenGL renderer mode is selected
-    // D3D11 mode will use Qt's default backend selection (D3D11 on Windows)
-    if (mpvRendererMode == "opengl") {
-        // Use OpenGL backend for mpv OpenGL renderer (official API, works on all platforms)
-        // mpv's OpenGL renderer is the official, stable API
-        // Qt 6 will use ANGLE on Windows (OpenGL ES via D3D11) for compatibility
-        
-        // 1. Force OpenGL backend (REQUIRED for mpv OpenGL renderer)
+    // Select Qt graphics backend:
+    // - libmpv backend => force OpenGL
+    // - all other backends => use Direct3D11 by default on Windows
+    if (forceOpenGLForMpv) {
+        // Use OpenGL backend for libmpv renderer.
         qputenv("QSG_RHI_BACKEND", "opengl");
-        
-        // 2. Set Qt Quick to use OpenGL (mpv requires OpenGL context)
         QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
-        
-        qDebug() << "[Main] OpenGL renderer mode selected - forcing OpenGL backend";
+        qDebug() << "[Main] libmpv backend selected - forcing OpenGL backend";
     } else {
-        // D3D11 mode - let Qt use default backend (D3D11 on Windows)
-        // Don't set QSG_RHI_BACKEND - let Qt use its default (D3D11 on Windows)
-        qDebug() << "[Main] D3D11 renderer mode selected - using default Qt backend (D3D11 on Windows)";
+        // Explicitly select D3D11 so startup defaults to DirectX for non-mpv backends.
+        qputenv("QSG_RHI_BACKEND", "d3d11");
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Direct3D11);
+        qDebug() << "[Main] Non-mpv backend selected - using Direct3D11 backend";
     }
     
     // Set style before creating QApplication (Qt recommendation)
@@ -548,12 +549,11 @@ int main(int argc, char *argv[])
     // Initialize application (sets same org/app name, which is fine - just ensures consistency)
     initApplication(app);
     
-    // Verify desktop OpenGL backend is being used (critical diagnostic)
-    // Note: Can't check RHI before window is shown, so we'll verify later
-    if (mpvRendererMode == "opengl") {
-        qDebug() << "[RHI] Desktop OpenGL backend configured for mpv OpenGL renderer (NOT ANGLE/OpenGLES2)";
+    // Verify configured backend intent (actual RHI is checked after window is created)
+    if (forceOpenGLForMpv) {
+        qDebug() << "[RHI] OpenGL backend configured for libmpv";
     } else {
-        qDebug() << "[RHI] D3D11 backend will be used (Qt default on Windows)";
+        qDebug() << "[RHI] Direct3D11 backend configured for non-mpv backend";
     }
     
     // Load application language setting (reuse settings object from above)

@@ -95,7 +95,7 @@ void LRCLibClient::fetchLyricsCached(const QString &trackName, const QString &ar
 
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, 
-                     "s3rp3nt_media v0.1 (https://github.com/s3rp3nt/s3rp3nt_media)");
+                     "s3rpent_media v0.1 (https://github.com/s3rpent/s3rpent_media)");
     
     qDebug() << "[LRCLIB] Fetching cached lyrics:" << url.toString();
     QNetworkReply *reply = m_networkManager->get(request);
@@ -120,7 +120,7 @@ void LRCLibClient::fetchLyricsById(int id)
 
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, 
-                     "s3rp3nt_media v0.1 (https://github.com/s3rp3nt/s3rp3nt_media)");
+                     "s3rpent_media v0.1 (https://github.com/s3rpent/s3rpent_media)");
     
     qDebug() << "[LRCLIB] Fetching lyrics by ID:" << url.toString();
     QNetworkReply *reply = m_networkManager->get(request);
@@ -161,7 +161,7 @@ void LRCLibClient::searchLyrics(const QString &query, const QString &trackName,
 
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, 
-                     "s3rp3nt_media v0.1 (https://github.com/s3rp3nt/s3rp3nt_media)");
+                     "s3rpent_media v0.1 (https://github.com/s3rpent/s3rpent_media)");
     
     qDebug() << "[LRCLIB] Searching lyrics:" << url.toString();
     QNetworkReply *reply = m_networkManager->get(request);
@@ -656,7 +656,7 @@ void LRCLibClient::sendSearchRequest(SearchAttemptMode mode)
 
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, 
-                     "s3rp3nt_media v0.1 (https://github.com/s3rp3nt/s3rp3nt_media)");
+                     "s3rpent_media v0.1 (https://github.com/s3rpent/s3rpent_media)");
 
     const int attemptNumber = static_cast<int>(mode) + 1;
     QVariantMap details {

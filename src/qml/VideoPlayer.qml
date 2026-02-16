@@ -6,7 +6,7 @@ import QtQuick.Dialogs
 import QtQuick.Window
 import Qt5Compat.GraphicalEffects
 import QtCore
-import s3rp3nt_media 1.0 as S3rp3ntMedia
+import s3rpent_media 1.0 as S3rpentMedia
 
 Item {
     id: videoPlayer
@@ -28,7 +28,7 @@ Item {
     }
     
     // MediaPlayerWrapper for subtitle formatting (not used for playback, only formatting)
-    S3rp3ntMedia.MediaPlayerWrapper {
+    S3rpentMedia.MediaPlayerWrapper {
         id: subtitleWrapper
         // Note: MediaPlayerWrapper is a QObject, not a visual item, so it doesn't have 'visible' property
     }
@@ -155,7 +155,7 @@ Item {
     
     // Embedded subtitle extractor - extracts subtitles using FFmpeg
     // Used in "external" mode to extract embedded subtitles for custom engine rendering
-    S3rp3ntMedia.EmbeddedSubtitleExtractor {
+    S3rpentMedia.EmbeddedSubtitleExtractor {
         id: embeddedSubtitleExtractor
         enabled: subtitleEngine === "external"  // Custom engine works with both external files and embedded subtitles
         
@@ -544,7 +544,7 @@ Item {
         id: wmfLoader
         // Only load when explicitly ready AND has a valid video source
         active: videoPlayer.wmfReady && videoPlayer.useWMF && videoPlayer.source !== ""
-        sourceComponent: S3rp3ntMedia.WMFVideoPlayer {
+        sourceComponent: S3rpentMedia.WMFVideoPlayer {
             id: wmfPlayerInstance
             source: videoPlayer.source
         // Don't bind volume initially - set it manually after Settings loads
@@ -615,7 +615,7 @@ Item {
     Loader {
         id: vlcLoader
         active: videoPlayer.libvlcReady && videoPlayer.useLibvlc && videoPlayer.source !== ""
-        sourceComponent: S3rp3ntMedia.VLCVideoPlayer {
+        sourceComponent: S3rpentMedia.VLCVideoPlayer {
             id: vlcPlayerInstance
             source: videoPlayer.source
 
@@ -666,7 +666,7 @@ Item {
             // Expose player instance to parent
             property var playerInstance: ffmpegPlayerInstance
             
-            S3rp3ntMedia.FFmpegVideoPlayer {
+            S3rpentMedia.FFmpegVideoPlayer {
                 id: ffmpegPlayerInstance
                 source: videoPlayer.source
 
@@ -946,7 +946,7 @@ Item {
                 z: 0
             }
             
-            S3rp3ntMedia.MPVVideoItemD3D11 {
+            S3rpentMedia.MPVVideoItemD3D11 {
                 id: mpvVideoDisplayD3D11
                 player: videoPlayer.mpvPlayerD3D11 || null
                 anchors.fill: parent
@@ -989,7 +989,7 @@ Item {
                 z: 0
             }
             
-            S3rp3ntMedia.MPVVideoItem {
+            S3rpentMedia.MPVVideoItem {
                 id: mpvVideoDisplayOpenGL
                 player: videoPlayer.mpvPlayer
                 anchors.fill: parent
@@ -2306,7 +2306,7 @@ Item {
             }
             
             // Load subtitle file using ColorUtils (C++ function that can read local files)
-            var subtitleText = S3rp3ntMedia.ColorUtils.readTextFile(subtitleUrl)
+            var subtitleText = S3rpentMedia.ColorUtils.readTextFile(subtitleUrl)
             
             if (subtitleText && subtitleText.length > 0) {
                 console.log("[VideoPlayer] Loaded subtitle file, length:", subtitleText.length)

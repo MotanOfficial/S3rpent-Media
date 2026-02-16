@@ -2266,7 +2266,7 @@ Rectangle {
             }
             
             Text {
-                text: qsTr("Register the app and open Windows Settings to select S3rp3nt Media as your default image viewer")
+                text: qsTr("Register the app and open Windows Settings to select S3rpent Media as your default image viewer")
                 font.pixelSize: 12
                 color: foregroundColor
                 opacity: 0.6

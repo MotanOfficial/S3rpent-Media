@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 
 
-project(s3rp3nt_media VERSION 0.1 LANGUAGES CXX)
+project(s3rpent_media VERSION 0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -257,7 +257,7 @@ FetchContent_MakeAvailable(qlementine-icons)
 
 qt_standard_project_setup(REQUIRES 6.8)
 
-qt_add_executable(apps3rp3nt_media
+qt_add_executable(apps3rpent_media
     src/cpp/main.cpp
     src/cpp/colorutils.cpp
     src/cpp/colorutils.h
@@ -332,7 +332,7 @@ qt_add_executable(apps3rp3nt_media
 # because Qt's target properties override global compile options and Qt-generated
 # sources (MOC, QML cache, RCC) won't inherit /FS from add_compile_options()
 if (MSVC)
-    target_compile_options(apps3rp3nt_media PRIVATE
+    target_compile_options(apps3rpent_media PRIVATE
         $<$<CONFIG:RelWithDebInfo>:/O2>     # Full optimization
         $<$<CONFIG:RelWithDebInfo>:/Ob2>     # Inline aggressively
         $<$<CONFIG:RelWithDebInfo>:/DNDEBUG> # Disable assertions
@@ -343,7 +343,7 @@ if (MSVC)
     )
     
     if (CMAKE_GENERATOR MATCHES "Visual Studio")
-        set_target_properties(apps3rp3nt_media PROPERTIES
+        set_target_properties(apps3rpent_media PROPERTIES
             MSVC_DEBUG_INFORMATION_FORMAT Embedded  # Matches /Z7
         )
     endif()
@@ -419,16 +419,16 @@ if(TARGET Qt6::Quick3D)
     list(APPEND QML_FILES src/qml/ModelViewerImpl.qml)
 endif()
 
-qt_add_qml_module(apps3rp3nt_media
-    URI s3rp3nt_media
+qt_add_qml_module(apps3rpent_media
+    URI s3rpent_media
     QML_FILES ${QML_FILES}
     PREFIX src
 )
 
 # Add shader files using qt_add_shaders
-# Attach directly to apps3rp3nt_media (same target that owns the QML module)
+# Attach directly to apps3rpent_media (same target that owns the QML module)
 # Shaders will be accessible at qrc:/resources/shaders/...
-qt_add_shaders(apps3rp3nt_media
+qt_add_shaders(apps3rpent_media
     PREFIX /resources/shaders
     FILES
         resources/shaders/ambientgradient.vert
@@ -444,7 +444,7 @@ qt_add_shaders(apps3rp3nt_media
 
 # Add font files to resources
 # Note: qt_add_shaders() automatically handles shader .qsb files - DO NOT manually add them
-qt_add_resources(apps3rp3nt_media PRIVATE
+qt_add_resources(apps3rpent_media PRIVATE
     PREFIX /fonts
     FILES
         resources/fonts/goodly-regular.otf
@@ -462,8 +462,8 @@ qt_add_resources(apps3rp3nt_media PRIVATE
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
 # If you are developing for iOS or macOS you should consider setting an
 # explicit, fixed bundle identifier manually though.
-set_target_properties(apps3rp3nt_media PROPERTIES
-#    MACOSX_BUNDLE_GUI_IDENTIFIER com.example.apps3rp3nt_media
+set_target_properties(apps3rpent_media PROPERTIES
+#    MACOSX_BUNDLE_GUI_IDENTIFIER com.example.apps3rpent_media
     MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
     MACOSX_BUNDLE TRUE
@@ -472,10 +472,10 @@ set_target_properties(apps3rp3nt_media PROPERTIES
 # Hide console window in Release mode (GUI app), show in Debug/RelWithDebInfo mode (for debugging)
 # RelWithDebInfo (FastDebug) is treated like Debug - console app for debugging
 if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
-    set_target_properties(apps3rp3nt_media PROPERTIES WIN32_EXECUTABLE TRUE)
+    set_target_properties(apps3rpent_media PROPERTIES WIN32_EXECUTABLE TRUE)
     message(STATUS "Building as GUI application (no console)")
 else()
-    set_target_properties(apps3rp3nt_media PROPERTIES WIN32_EXECUTABLE FALSE)
+    set_target_properties(apps3rpent_media PROPERTIES WIN32_EXECUTABLE FALSE)
     if(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
         message(STATUS "Building as console application (FastDebug/RelWithDebInfo mode)")
     else()
@@ -483,7 +483,7 @@ else()
     endif()
 endif()
 
-target_link_libraries(apps3rp3nt_media
+target_link_libraries(apps3rpent_media
     PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia Qt6::Network Qt6::Widgets Qt6::OpenGLWidgets Qt6::ShaderTools Qt6::Concurrent
     PRIVATE Qt6::Gui
     PRIVATE Qt6::GuiPrivate
@@ -491,11 +491,11 @@ target_link_libraries(apps3rp3nt_media
 )
 
 if(TARGET Qt6::Quick3D)
-    target_link_libraries(apps3rp3nt_media PRIVATE Qt6::Quick3D)
+    target_link_libraries(apps3rpent_media PRIVATE Qt6::Quick3D)
     if(TARGET Qt6::Quick3DAssetUtils)
-        target_link_libraries(apps3rp3nt_media PRIVATE Qt6::Quick3DAssetUtils)
+        target_link_libraries(apps3rpent_media PRIVATE Qt6::Quick3DAssetUtils)
     endif()
-    target_compile_definitions(apps3rp3nt_media PRIVATE HAS_MODEL3D_SUPPORT=1)
+    target_compile_definitions(apps3rpent_media PRIVATE HAS_MODEL3D_SUPPORT=1)
     message(STATUS "3D model support enabled (Qt6::Quick3D found)")
 else()
     message(STATUS "3D model support disabled (Qt6::Quick3D not found)")
@@ -503,18 +503,18 @@ endif()
 
 if(LibArchive_FOUND)
     if(TARGET LibArchive::LibArchive)
-        target_link_libraries(apps3rp3nt_media PRIVATE LibArchive::LibArchive)
+        target_link_libraries(apps3rpent_media PRIVATE LibArchive::LibArchive)
     elseif(TARGET libarchive::libarchive)
-        target_link_libraries(apps3rp3nt_media PRIVATE libarchive::libarchive)
+        target_link_libraries(apps3rpent_media PRIVATE libarchive::libarchive)
     elseif(TARGET archive)
-        target_link_libraries(apps3rp3nt_media PRIVATE archive)
+        target_link_libraries(apps3rpent_media PRIVATE archive)
     elseif(LibArchive_LIBRARIES)
-        target_link_libraries(apps3rp3nt_media PRIVATE ${LibArchive_LIBRARIES})
+        target_link_libraries(apps3rpent_media PRIVATE ${LibArchive_LIBRARIES})
     endif()
     if(LibArchive_INCLUDE_DIRS)
-        target_include_directories(apps3rp3nt_media PRIVATE ${LibArchive_INCLUDE_DIRS})
+        target_include_directories(apps3rpent_media PRIVATE ${LibArchive_INCLUDE_DIRS})
     endif()
-    target_compile_definitions(apps3rp3nt_media PRIVATE HAS_LIBARCHIVE=1)
+    target_compile_definitions(apps3rpent_media PRIVATE HAS_LIBARCHIVE=1)
     message(STATUS "ZIP extraction/listing: libarchive enabled")
 else()
     message(STATUS "ZIP extraction/listing: libarchive not found, using external/fallback extractors")
@@ -542,7 +542,7 @@ if (
     EXISTS "${QT_PRIVATE_QTGUI_FULL_DIR}/private/qrhi_p.h"
     AND EXISTS "${QT_PRIVATE_QTGUI_FULL_DIR}/rhi/qrhi.h"
 )
-    target_include_directories(apps3rp3nt_media PRIVATE
+    target_include_directories(apps3rpent_media PRIVATE
         "${QT_PRIVATE_QTGUI_VERSIONED_DIR}"
         "${QT_PRIVATE_QTGUI_FULL_DIR}"
     )
@@ -560,8 +560,8 @@ endif()
 
 # Optional PDF support (not available for all platforms/compilers)
 if(TARGET Qt6::Pdf AND TARGET Qt6::PdfQuick)
-    target_link_libraries(apps3rp3nt_media PRIVATE Qt6::Pdf Qt6::PdfQuick)
-    target_compile_definitions(apps3rp3nt_media PRIVATE HAS_PDF_SUPPORT=1)
+    target_link_libraries(apps3rpent_media PRIVATE Qt6::Pdf Qt6::PdfQuick)
+    target_compile_definitions(apps3rpent_media PRIVATE HAS_PDF_SUPPORT=1)
     message(STATUS "PDF support enabled")
 else()
     message(STATUS "PDF support disabled (Qt6::Pdf or Qt6::PdfQuick not found)")
@@ -573,12 +573,12 @@ if(FFMPEG_FOUND)
     # This ensures we compile against the correct FFmpeg headers (custom build)
     # Must come before any other includes to avoid header conflicts
     if(FFMPEG_INCLUDE_DIR)
-        target_include_directories(apps3rp3nt_media PRIVATE 
+        target_include_directories(apps3rpent_media PRIVATE 
             ${FFMPEG_INCLUDE_DIR}  # Custom FFmpeg headers (highest priority)
         )
         message(STATUS "  FFmpeg include directory set: ${FFMPEG_INCLUDE_DIR}")
     elseif(DEFINED FFMPEG_INCLUDE_DIRS)
-        target_include_directories(apps3rp3nt_media PRIVATE ${FFMPEG_INCLUDE_DIRS})
+        target_include_directories(apps3rpent_media PRIVATE ${FFMPEG_INCLUDE_DIRS})
         message(STATUS "  FFmpeg include directories set: ${FFMPEG_INCLUDE_DIRS}")
     endif()
     
@@ -609,7 +609,7 @@ if(FFMPEG_FOUND)
         
         foreach(CUDA_INCLUDE_PATH ${CUDA_INCLUDE_PATHS})
             if(EXISTS "${CUDA_INCLUDE_PATH}/cuda.h")
-                target_include_directories(apps3rp3nt_media PRIVATE "${CUDA_INCLUDE_PATH}")
+                target_include_directories(apps3rpent_media PRIVATE "${CUDA_INCLUDE_PATH}")
                 message(STATUS "  CUDA include directory found: ${CUDA_INCLUDE_PATH}")
                 set(CUDA_INCLUDE_FOUND TRUE)
                 break()
@@ -631,7 +631,7 @@ if(FFMPEG_FOUND)
     if(DEFINED FFMPEG_BIN_DIR)
         # Link to import libraries (required for MSVC to resolve symbols)
         # These are import libraries, not static libraries - code is in DLLs
-        target_link_libraries(apps3rp3nt_media PRIVATE 
+        target_link_libraries(apps3rpent_media PRIVATE 
             ${FFMPEG_AVFORMAT_LIB} 
             ${FFMPEG_AVCODEC_LIB} 
             ${FFMPEG_AVUTIL_LIB}
@@ -655,10 +655,10 @@ if(FFMPEG_FOUND)
             foreach(DLL ${FFMPEG_DLLS})
                 if(EXISTS ${DLL})
                     get_filename_component(DLL_NAME ${DLL} NAME)
-                    add_custom_command(TARGET apps3rp3nt_media POST_BUILD
+                    add_custom_command(TARGET apps3rpent_media POST_BUILD
                         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         ${DLL}
-                        $<TARGET_FILE_DIR:apps3rp3nt_media>/${DLL_NAME}
+                        $<TARGET_FILE_DIR:apps3rpent_media>/${DLL_NAME}
                         COMMENT "Copying ${DLL_NAME} to build directory"
                     )
                 endif()
@@ -667,7 +667,7 @@ if(FFMPEG_FOUND)
         endif()
     # vcpkg FFmpeg build
     elseif(TARGET FFMPEG::avformat)
-        target_link_libraries(apps3rp3nt_media PRIVATE 
+        target_link_libraries(apps3rpent_media PRIVATE 
             FFMPEG::avformat 
             FFMPEG::avcodec 
             FFMPEG::avutil
@@ -678,13 +678,13 @@ if(FFMPEG_FOUND)
         message(STATUS "  Linked via vcpkg imported targets")
         # Add library directories for vcpkg
         if(EXISTS "C:/vcpkg/installed/x64-windows/lib")
-            target_link_directories(apps3rp3nt_media PRIVATE "C:/vcpkg/installed/x64-windows/lib")
+            target_link_directories(apps3rpent_media PRIVATE "C:/vcpkg/installed/x64-windows/lib")
         elseif(DEFINED FFMPEG_LIBRARY_DIRS)
-            target_link_directories(apps3rp3nt_media PRIVATE ${FFMPEG_LIBRARY_DIRS})
+            target_link_directories(apps3rpent_media PRIVATE ${FFMPEG_LIBRARY_DIRS})
         endif()
     elseif(EXISTS "C:/vcpkg/installed/x64-windows/lib/avformat.lib")
         # Use full paths from vcpkg (most reliable)
-        target_link_libraries(apps3rp3nt_media PRIVATE 
+        target_link_libraries(apps3rpent_media PRIVATE 
             "C:/vcpkg/installed/x64-windows/lib/avformat.lib"
             "C:/vcpkg/installed/x64-windows/lib/avcodec.lib"
             "C:/vcpkg/installed/x64-windows/lib/avutil.lib"
@@ -693,21 +693,21 @@ if(FFMPEG_FOUND)
             "C:/vcpkg/installed/x64-windows/lib/avfilter.lib"
         )
         message(STATUS "  Linked via vcpkg library paths (full paths)")
-        target_link_directories(apps3rp3nt_media PRIVATE "C:/vcpkg/installed/x64-windows/lib")
+        target_link_directories(apps3rpent_media PRIVATE "C:/vcpkg/installed/x64-windows/lib")
     elseif(DEFINED FFMPEG_LIBRARIES)
         # Use vcpkg's FFMPEG_LIBRARIES if available
-        target_link_libraries(apps3rp3nt_media PRIVATE ${FFMPEG_LIBRARIES})
+        target_link_libraries(apps3rpent_media PRIVATE ${FFMPEG_LIBRARIES})
         message(STATUS "  Linked via vcpkg FFMPEG_LIBRARIES")
         if(DEFINED FFMPEG_LIBRARY_DIRS)
-            target_link_directories(apps3rp3nt_media PRIVATE ${FFMPEG_LIBRARY_DIRS})
+            target_link_directories(apps3rpent_media PRIVATE ${FFMPEG_LIBRARY_DIRS})
         endif()
     else()
         # Manual linking (pkg-config or manual find)
         if(FFMPEG_PKG_FOUND)
-            target_link_libraries(apps3rp3nt_media PRIVATE ${FFMPEG_PKG_LIBRARIES})
-            target_compile_options(apps3rp3nt_media PRIVATE ${FFMPEG_PKG_CFLAGS_OTHER})
+            target_link_libraries(apps3rpent_media PRIVATE ${FFMPEG_PKG_LIBRARIES})
+            target_compile_options(apps3rpent_media PRIVATE ${FFMPEG_PKG_CFLAGS_OTHER})
         else()
-            target_link_libraries(apps3rp3nt_media PRIVATE 
+            target_link_libraries(apps3rpent_media PRIVATE 
                 ${FFMPEG_AVFORMAT_LIB} 
                 ${FFMPEG_AVCODEC_LIB} 
                 ${FFMPEG_AVUTIL_LIB}
@@ -718,49 +718,49 @@ if(FFMPEG_FOUND)
         endif()
         message(STATUS "  Linked manually")
     endif()
-    target_compile_definitions(apps3rp3nt_media PRIVATE HAS_FFMPEG_LIBS=1)
+    target_compile_definitions(apps3rpent_media PRIVATE HAS_FFMPEG_LIBS=1)
 endif()
 
 # Link libmpv if found (for HDR video playback)
 if(LIBMPV_FOUND)
     if(LIBMPV_INCLUDE_DIR)
-        target_include_directories(apps3rp3nt_media PRIVATE ${LIBMPV_INCLUDE_DIR})
+        target_include_directories(apps3rpent_media PRIVATE ${LIBMPV_INCLUDE_DIR})
     endif()
     
     # Add library directories for vcpkg
     if(EXISTS "C:/vcpkg/installed/x64-windows/lib")
-        target_link_directories(apps3rp3nt_media PRIVATE "C:/vcpkg/installed/x64-windows/lib")
+        target_link_directories(apps3rpent_media PRIVATE "C:/vcpkg/installed/x64-windows/lib")
     endif()
     
     # Link libmpv
     if(LIBMPV_PKG_FOUND)
-        target_link_libraries(apps3rp3nt_media PRIVATE ${LIBMPV_PKG_LIBRARIES})
-        target_compile_options(apps3rp3nt_media PRIVATE ${LIBMPV_PKG_CFLAGS_OTHER})
+        target_link_libraries(apps3rpent_media PRIVATE ${LIBMPV_PKG_LIBRARIES})
+        target_compile_options(apps3rpent_media PRIVATE ${LIBMPV_PKG_CFLAGS_OTHER})
         message(STATUS "  Linked libmpv via pkg-config")
     else()
-        target_link_libraries(apps3rp3nt_media PRIVATE ${LIBMPV_LIBRARIES})
+        target_link_libraries(apps3rpent_media PRIVATE ${LIBMPV_LIBRARIES})
         message(STATUS "  Linked libmpv manually")
     endif()
     
-    target_compile_definitions(apps3rp3nt_media PRIVATE HAS_LIBMPV=1)
+    target_compile_definitions(apps3rpent_media PRIVATE HAS_LIBMPV=1)
     message(STATUS "✅ libmpv linked - HDR video playback enabled")
     
     # Copy libmpv DLL to build directory (Windows only)
     if(WIN32)
         # Find the DLL
         if(EXISTS "C:/mpv/libmpv-2.dll")
-            add_custom_command(TARGET apps3rp3nt_media POST_BUILD
+            add_custom_command(TARGET apps3rpent_media POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "C:/mpv/libmpv-2.dll"
-                $<TARGET_FILE_DIR:apps3rp3nt_media>
+                $<TARGET_FILE_DIR:apps3rpent_media>
                 COMMENT "Copying libmpv-2.dll to build directory"
             )
             message(STATUS "  Will copy libmpv-2.dll to build directory")
         elseif(EXISTS "C:/mpv/libmpv.dll")
-            add_custom_command(TARGET apps3rp3nt_media POST_BUILD
+            add_custom_command(TARGET apps3rpent_media POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "C:/mpv/libmpv.dll"
-                $<TARGET_FILE_DIR:apps3rp3nt_media>
+                $<TARGET_FILE_DIR:apps3rpent_media>
                 COMMENT "Copying libmpv.dll to build directory"
             )
             message(STATUS "  Will copy libmpv.dll to build directory")
@@ -770,7 +770,7 @@ endif()
 
 # Windows-specific libraries for WASAPI audio loopback, memory info, Windows Media Session, and DWM
 if(WIN32)
-    target_link_libraries(apps3rp3nt_media PRIVATE
+    target_link_libraries(apps3rpent_media PRIVATE
         ole32
         oleaut32
         uuid
@@ -779,7 +779,7 @@ if(WIN32)
     )
     # Additional libraries for Windows Media Session (WinRT) - MSVC only
     if(MSVC)
-        target_link_libraries(apps3rp3nt_media PRIVATE
+        target_link_libraries(apps3rpent_media PRIVATE
             runtimeobject
             shlwapi
             propsys
@@ -808,13 +808,13 @@ endif()
 
 # Translation files
 set(TS_FILES
-    translations/s3rp3nt_media_ro.ts
+    translations/s3rpent_media_ro.ts
 )
 
-qt_add_translations(apps3rp3nt_media TS_FILES ${TS_FILES})
+qt_add_translations(apps3rpent_media TS_FILES ${TS_FILES})
 
 include(GNUInstallDirs)
-install(TARGETS apps3rp3nt_media
+install(TARGETS apps3rpent_media
     BUNDLE DESTINATION .
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -823,10 +823,10 @@ install(TARGETS apps3rp3nt_media
 # Copy Bad Apple files to build directory (for development)
 # These files will be in the same directory as the executable
 if(EXISTS "${CMAKE_SOURCE_DIR}/resources/media/Bad Apple!!.mp3")
-    add_custom_command(TARGET apps3rp3nt_media POST_BUILD
+    add_custom_command(TARGET apps3rpent_media POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_SOURCE_DIR}/resources/media/Bad Apple!!.mp3"
-            "$<TARGET_FILE_DIR:apps3rp3nt_media>/Bad Apple!!.mp3"
+            "$<TARGET_FILE_DIR:apps3rpent_media>/Bad Apple!!.mp3"
         COMMENT "Copying Bad Apple!!.mp3 to build directory"
     )
     message(STATUS "Bad Apple!!.mp3 will be copied to build directory")
@@ -835,10 +835,10 @@ else()
 endif()
 
 if(EXISTS "${CMAKE_SOURCE_DIR}/resources/media/badapple_frames.bin")
-    add_custom_command(TARGET apps3rp3nt_media POST_BUILD
+    add_custom_command(TARGET apps3rpent_media POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_SOURCE_DIR}/resources/media/badapple_frames.bin"
-            "$<TARGET_FILE_DIR:apps3rp3nt_media>/badapple_frames.bin"
+            "$<TARGET_FILE_DIR:apps3rpent_media>/badapple_frames.bin"
         COMMENT "Copying badapple_frames.bin to build directory"
     )
     message(STATUS "badapple_frames.bin will be copied to build directory")
@@ -848,28 +848,28 @@ endif()
 
 # Copy icon files to build directory (for tray icon loading from file system)
 if(EXISTS "${CMAKE_SOURCE_DIR}/resources/icons/icon.ico")
-    add_custom_command(TARGET apps3rp3nt_media POST_BUILD
+    add_custom_command(TARGET apps3rpent_media POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_SOURCE_DIR}/resources/icons/icon.ico"
-            "$<TARGET_FILE_DIR:apps3rp3nt_media>/icon.ico"
+            "$<TARGET_FILE_DIR:apps3rpent_media>/icon.ico"
         COMMENT "Copying icon.ico to build directory"
     )
 endif()
 if(EXISTS "${CMAKE_SOURCE_DIR}/resources/icons/icon.png")
-    add_custom_command(TARGET apps3rp3nt_media POST_BUILD
+    add_custom_command(TARGET apps3rpent_media POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_SOURCE_DIR}/resources/icons/icon.png"
-            "$<TARGET_FILE_DIR:apps3rp3nt_media>/icon.png"
+            "$<TARGET_FILE_DIR:apps3rpent_media>/icon.png"
         COMMENT "Copying icon.png to build directory"
     )
 endif()
 
 # Copy sprites folder to build directory (for Undertale fight easter egg)
 if(EXISTS "${CMAKE_SOURCE_DIR}/sprites")
-    add_custom_command(TARGET apps3rp3nt_media POST_BUILD
+    add_custom_command(TARGET apps3rpent_media POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/sprites"
-            "$<TARGET_FILE_DIR:apps3rp3nt_media>/sprites"
+            "$<TARGET_FILE_DIR:apps3rpent_media>/sprites"
         COMMENT "Copying sprites folder to build directory"
     )
     message(STATUS "sprites folder will be copied to build directory")

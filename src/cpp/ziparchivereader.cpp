@@ -603,7 +603,7 @@ QUrl ZipArchiveReader::prepareEntryForExternalDrag(const QString &entryPath, boo
     }
 
     const QString tempRoot = QDir::cleanPath(QStandardPaths::writableLocation(QStandardPaths::TempLocation)
-                                             + "/s3rp3nt_media_zip_drag");
+                                             + "/s3rpent_media_zip_drag");
     QDir().mkpath(tempRoot);
     const QString sessionDir = tempRoot + "/" + QUuid::createUuid().toString(QUuid::WithoutBraces);
     QDir().mkpath(sessionDir);

@@ -3,10 +3,10 @@ setlocal
 
 set "QT_ENV=C:\Qt\6.10.0\mingw_64\bin\qtenv2.bat"
 set "CMAKE_CMD=C:\Qt\Tools\CMake_64\bin\cmake.exe"
-set "PROJECT_DIR=C:\Users\Motan\Documents\s3rp3nt_media"
-set "BUILD_DIR=C:/Users/Motan/Documents/s3rp3nt_media/build/Desktop_Qt_6_10_0_MinGW_64_bit-Debug"
+set "PROJECT_DIR=C:\Users\Motan\Documents\s3rpent_media"
+set "BUILD_DIR=C:/Users/Motan/Documents/s3rpent_media/build/Desktop_Qt_6_10_0_MinGW_64_bit-Debug"
 set "DEPLOY_DIR=%BUILD_DIR%"
-set "BINARY=%BUILD_DIR%\apps3rp3nt_media.exe"
+set "BINARY=%BUILD_DIR%\apps3rpent_media.exe"
 set "WINDEPLOYQT=C:\Qt\6.10.0\mingw_64\bin\windeployqt.exe"
 
 if exist "%QT_ENV%" (

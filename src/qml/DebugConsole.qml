@@ -6,7 +6,7 @@ ApplicationWindow {
     id: debugWindow
     width: 600
     height: 400
-    title: "Debug Console - s3rp3nt media"
+    title: "Debug Console - s3rpent media"
     visible: true
     flags: Qt.Window | Qt.WindowTitleHint | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint
     

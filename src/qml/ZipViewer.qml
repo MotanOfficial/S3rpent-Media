@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
 import Qt5Compat.GraphicalEffects
-import s3rp3nt_media 1.0 as S3rp3ntMedia
+import s3rpent_media 1.0 as S3rpentMedia
 
 Item {
     id: zipViewer
@@ -43,11 +43,11 @@ Item {
     property int colModifiedWidth: s(150)
     property int colNameWidth: Math.max(s(180), entriesList.width - colIconWidth - colSizeWidth - colPackedWidth - colModifiedWidth - s(40))
 
-    S3rp3ntMedia.ZipArchiveReader {
+    S3rpentMedia.ZipArchiveReader {
         id: archiveReaderObj
         source: zipViewer.source
     }
-    S3rp3ntMedia.ExternalDragHelper {
+    S3rpentMedia.ExternalDragHelper {
         id: externalDragHelper
     }
 

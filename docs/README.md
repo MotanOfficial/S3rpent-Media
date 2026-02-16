@@ -1,4 +1,4 @@
-# 🎬 s3rp3nt media
+# 🎬 s3rpent media
 
 A modern, feature-rich media viewer built with Qt 6, designed to provide a beautiful and immersive experience for viewing images, videos, audio files, documents, and more.
 
@@ -135,8 +135,8 @@ Comprehensive metadata popup showing:
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/MotanOfficial/s3rp3nt_media.git
-   cd s3rp3nt_media
+   git clone https://github.com/MotanOfficial/s3rpent_media.git
+   cd s3rpent_media
    ```
 
 2. **Configure with CMake**
@@ -153,7 +153,7 @@ Comprehensive metadata popup showing:
 
 4. **Run**
    ```bash
-   ./apps3rp3nt_media
+   ./apps3rpent_media
    ```
 
 ### Windows Build Scripts
@@ -167,12 +167,12 @@ The repository includes convenient build scripts:
 
 ### Windows Installer
 
-Download the latest installer from the [Releases](https://github.com/MotanOfficial/s3rp3nt_media/releases) page and run `S3rp3nt_Media_Setup.exe`.
+Download the latest installer from the [Releases](https://github.com/MotanOfficial/s3rpent_media/releases) page and run `S3rpent_Media_Setup.exe`.
 
 ### Manual Installation
 
 1. Extract the application files to your desired location
-2. Run `apps3rp3nt_media.exe`
+2. Run `apps3rpent_media.exe`
 3. (Optional) Set as default viewer via Settings → File Associations
 
 ## 🎮 Usage
@@ -181,7 +181,7 @@ Download the latest installer from the [Releases](https://github.com/MotanOffici
 
 - **Drag & Drop**: Drag any supported file onto the window
 - **File Dialog**: Press `Ctrl+O` or use the "Browse files" button
-- **Command Line**: `apps3rp3nt_media.exe "path/to/file"`
+- **Command Line**: `apps3rpent_media.exe "path/to/file"`
 
 ### Controls
 

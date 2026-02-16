@@ -3,7 +3,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
 import Qt5Compat.GraphicalEffects
-import s3rp3nt_media
+import s3rpent_media
 
 Item {
     id: audioPlayer

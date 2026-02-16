@@ -1,5 +1,5 @@
 # libmpv Setup Script for Windows
-# This script helps set up libmpv for the s3rp3nt_media project
+# This script helps set up libmpv for the s3rpent_media project
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "libmpv Setup Script" -ForegroundColor Cyan

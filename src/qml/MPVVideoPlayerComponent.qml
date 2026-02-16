@@ -1,11 +1,11 @@
 import QtQuick
-import s3rp3nt_media 1.0 as S3rp3ntMedia
+import s3rpent_media 1.0 as S3rpentMedia
 
 // This component will only be loaded if MPVVideoPlayer type exists
 // If it doesn't exist, the Loader will handle the error gracefully
 // Note: This file will cause a parse error if MPVVideoPlayer doesn't exist
 // The Loader in VideoPlayer.qml will catch this and disable itself
-S3rp3ntMedia.MPVVideoPlayer {
+S3rpentMedia.MPVVideoPlayer {
     id: mpvPlayerInstance
     // source will be set by the Loader's onItemChanged
     

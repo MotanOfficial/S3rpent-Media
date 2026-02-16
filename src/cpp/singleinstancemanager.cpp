@@ -24,7 +24,7 @@ SingleInstanceManager::SingleInstanceManager(QObject *parent)
     , m_isPrimaryInstance(false)
     , m_localServer(nullptr)
     , m_sharedMemory(nullptr)
-    , m_serverName("s3rp3nt_media_single_instance")
+    , m_serverName("s3rpent_media_single_instance")
     , m_trayIcon(nullptr)
 {
     m_isPrimaryInstance = createSingleInstanceLock();
@@ -247,7 +247,7 @@ void SingleInstanceManager::setupSystemTray()
         qWarning() << "System tray icon using default system icon";
     }
     m_trayIcon->setIcon(icon);
-    m_trayIcon->setToolTip("s3rp3nt media");
+    m_trayIcon->setToolTip("s3rpent media");
     
     // Create tray menu
     QMenu *trayMenu = new QMenu();

@@ -3,13 +3,13 @@ setlocal EnableDelayedExpansion
 
 set "QT_ENV=C:\Qt\6.10.1\mingw_64\bin\qtenv2.bat"
 set "CMAKE_CMD=C:\Qt\Tools\CMake_64\bin\cmake.exe"
-set "PROJECT_DIR=C:\Users\Motan\Documents\s3rp3nt_media"
-set "BUILD_DIR=C:\Users\Motan\Documents\s3rp3nt_media\build\Release"
-set "BINARY=%BUILD_DIR%\apps3rp3nt_media.exe"
+set "PROJECT_DIR=C:\Users\Motan\Documents\s3rpent_media"
+set "BUILD_DIR=C:\Users\Motan\Documents\s3rpent_media\build\Release"
+set "BINARY=%BUILD_DIR%\apps3rpent_media.exe"
 set "WINDEPLOYQT=C:\Qt\6.10.1\mingw_64\bin\windeployqt.exe"
 
 echo ========================================
-echo   S3rp3nt Media - Release Build
+echo   S3rpent Media - Release Build
 echo ========================================
 echo.
 

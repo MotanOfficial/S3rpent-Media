@@ -28,7 +28,7 @@ ApplicationWindow {
     minimumWidth: 640
     minimumHeight: 480
     visible: true
-    title: qsTr("s3rp3nt media · Media Viewer")
+    title: qsTr("s3rpent media · Media Viewer")
     flags: Qt.Window | Qt.FramelessWindowHint
     color: "#000000"  // Black background to prevent white border in maximized/fullscreen (was Qt.transparent for DWM)
     background: WindowBackground {

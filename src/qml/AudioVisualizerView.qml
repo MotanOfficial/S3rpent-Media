@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Shapes
-import s3rp3nt_media
+import s3rpent_media
 
 Item {
     id: visualizer
