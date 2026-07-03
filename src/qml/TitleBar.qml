@@ -29,6 +29,8 @@ Item {
     property color accentColor: "#121216"
     property color foregroundColor: "#f5f5f5"
     property bool hasMedia: false
+    property bool listenTogetherEnabled: false
+    property bool listenTogetherActive: false
     property var window: null
     property var frameHelper: null  // FrameHelper reference for immediate titleBarVisible updates
     property bool autoHideEnabled: false
@@ -41,6 +43,7 @@ Item {
     property alias rightControlsHitWidth: titleBarLayout.rightControlsHitWidth
     
     signal metadataClicked()
+    signal listenTogetherClicked()
     signal settingsClicked()
     signal minimizeClicked()
     signal maximizeClicked()
@@ -53,7 +56,6 @@ Item {
     // This ensures the hit-test (running on Windows message thread) sees the update immediately
     onTitleBarVisibleChanged: {
         if (frameHelper) {
-            console.log("[TitleBar] titleBarVisible changed to:", titleBarVisible, "- updating C++ property immediately")
             frameHelper.titleBarVisible = titleBarVisible
         }
     }
@@ -71,10 +73,7 @@ Item {
         running: false
         onTriggered: {
             if (autoHideEnabled) {
-                console.log("[TitleBar] Hide timer triggered - hiding titlebar")
                 titleBarVisible = false
-            } else {
-                console.log("[TitleBar] Hide timer triggered but auto-hide disabled")
             }
         }
     }
@@ -84,13 +83,10 @@ Item {
     
     // Update visibility when auto-hide is toggled
     onAutoHideEnabledChanged: {
-        console.log("[TitleBar] autoHideEnabled changed to:", autoHideEnabled)
         if (!autoHideEnabled) {
-            console.log("[TitleBar] Auto-hide disabled - showing titlebar")
             titleBarVisible = true  // Always visible when disabled
             hideTimer.stop()
         } else {
-            console.log("[TitleBar] Auto-hide enabled")
             // When enabled, show initially, then start hide timer
             titleBarVisible = true
             // Start hide timer after a short delay to allow user to move cursor to top
@@ -125,8 +121,8 @@ Item {
             }
         }
     
-    // Subtle shadow at the bottom instead of border
-    layer.enabled: true
+    // Shadow only when bar is shown — auto-hide skips the extra effect pass
+    layer.enabled: titleBarVisible
     layer.effect: DropShadow {
         transparentBorder: true
         horizontalOffset: 0
@@ -274,6 +270,55 @@ Item {
                     cursorShape: Qt.PointingHand
                     onEntered: metadataButton.hovered = true
                     onExited: metadataButton.hovered = false
+                }
+            }
+
+            Rectangle {
+                id: listenTogetherButton
+                Layout.preferredWidth: 36
+                Layout.preferredHeight: 36
+                radius: 8
+                visible: listenTogetherEnabled
+                property bool hovered: false
+                color: listenTogetherTap.pressed
+                       ? Qt.rgba(foregroundColor.r, foregroundColor.g, foregroundColor.b, 0.2)
+                       : (listenTogetherActive
+                          ? Qt.rgba(0.45, 0.35, 0.95, 0.35)
+                          : (hovered
+                             ? Qt.rgba(foregroundColor.r, foregroundColor.g, foregroundColor.b, 0.12)
+                             : Qt.rgba(foregroundColor.r, foregroundColor.g, foregroundColor.b, 0.05)))
+
+                Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                scale: listenTogetherTap.pressed ? 0.95 : (hovered ? 1.05 : 1.0)
+
+                Image {
+                    id: listenTogetherIcon
+                    anchors.centerIn: parent
+                    source: "qrc:/qlementine/icons/16/hardware/headphones.svg"
+                    sourceSize: Qt.size(18, 18)
+                    visible: false
+                }
+                ColorOverlay {
+                    anchors.fill: listenTogetherIcon
+                    source: listenTogetherIcon
+                    color: listenTogetherActive ? "#c4b5fd" : foregroundColor
+                }
+
+                TapHandler {
+                    id: listenTogetherTap
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    acceptedButtons: Qt.LeftButton
+                    gesturePolicy: TapHandler.ReleaseWithinBounds
+                    onTapped: listenTogetherClicked()
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    acceptedButtons: Qt.NoButton
+                    cursorShape: Qt.PointingHandCursor
+                    onEntered: listenTogetherButton.hovered = true
+                    onExited: listenTogetherButton.hovered = false
                 }
             }
 

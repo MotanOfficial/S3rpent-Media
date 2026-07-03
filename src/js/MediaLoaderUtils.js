@@ -13,7 +13,13 @@
 function forceReloadLoader(loader) {
     if (loader) {
         loader.active = false
-        loader.active = true
+        // Defer activation to the next event-loop turn so the UI can render first.
+        // This reduces visible startup stalls when heavy viewer components are created.
+        Qt.callLater(function() {
+            if (loader) {
+                loader.active = true
+            }
+        })
     }
 }
 

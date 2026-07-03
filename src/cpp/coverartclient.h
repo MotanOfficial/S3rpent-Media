@@ -31,6 +31,7 @@ signals:
     void lastErrorChanged();
 
 private slots:
+    void onNetworkReplyFinished(QNetworkReply *reply);
     void onMusicBrainzReplyFinished(QNetworkReply *reply);
     void onCoverArtArchiveReplyFinished(QNetworkReply *reply);
 

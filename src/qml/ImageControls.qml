@@ -66,8 +66,8 @@ Item {
             }
         }
         
-        // Modern drop shadow using layer (like settings page)
-        layer.enabled: true
+        // Drop shadow only while visible — avoids offscreen layer cost when faded out
+        layer.enabled: imageControls.opacity > 0.001
         layer.effect: DropShadow {
             radius: 20
             samples: 41

@@ -36,10 +36,29 @@ function checkIfGif(url) {
     return path.endsWith(".gif")
 }
 
-function checkIfAudio(url) {
+function checkIfImage(url) {
     const path = normalizedPath(url)
     if (path === "")
         return false
+    return path.endsWith(".jpg") || path.endsWith(".jpeg") || path.endsWith(".png") ||
+           path.endsWith(".bmp") || path.endsWith(".webp") || path.endsWith(".ico") ||
+           path.endsWith(".tiff") || path.endsWith(".tif") || path.endsWith(".svg")
+}
+
+function checkIfAudio(url) {
+    const s = url ? url.toString() : ""
+    if (s.indexOf("http://") === 0 || s.indexOf("https://") === 0) {
+        if (/youtube\.com(\/watch|\/shorts|\/embed)|youtu\.be\//i.test(s))
+            return false
+        if (s.indexOf("googlevideo.com") >= 0 || s.indexOf("mime=audio") >= 0)
+            return true
+    }
+    const path = normalizedPath(url)
+    if (path === "")
+        return false
+    // Listen Together P2P streams land in Temp with this prefix
+    if (path.indexOf("s3rpent_stream_") >= 0)
+        return true
     return path.endsWith(".mp3") || path.endsWith(".wav") || path.endsWith(".flac") ||
            path.endsWith(".ogg") || path.endsWith(".aac") || path.endsWith(".m4a") ||
            path.endsWith(".wma") || path.endsWith(".opus") || path.endsWith(".mp2") ||

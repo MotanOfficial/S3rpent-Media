@@ -57,32 +57,7 @@ function handleComponentDestruction(isMainWindow, window, unloadAllViewers) {
 }
 
 function handleComponentCompleted(initialImage, window, logToDebugConsole, updateAccentColor, callLater) {
-    // Test logging to verify debug console is working
-    console.log("[App] Application started - Component.onCompleted")
-    if (typeof logToDebugConsole === "function") {
-        logToDebugConsole("[App] Application started", "info")
-    }
-    
-    // Check debug console connection (it might be set later by main.cpp)
-    if (typeof callLater === "function") {
-        callLater(function() {
-            if (window.debugConsole && typeof logToDebugConsole === "function") {
-                logToDebugConsole("[App] Debug console connected", "info")
-            } else {
-                console.log("[App] WARNING: Debug console not connected yet (will be set by main.cpp)")
-                // Try again after a short delay
-                if (typeof callLater === "function") {
-                    callLater(function() {
-                        if (window.debugConsole && typeof logToDebugConsole === "function") {
-                            logToDebugConsole("[App] Debug console connected (delayed)", "info")
-                        } else {
-                            console.log("[App] ERROR: Debug console still not connected")
-                        }
-                    }, 100)
-                }
-            }
-        })
-    }
+    // Keep startup quiet: skip debug-console handshake logs.
     
     // CRITICAL: Do NOT load from initialImage here - loading happens ONLY via onCurrentImageChanged
     // This ensures windows can be reused properly (Component.onCompleted only runs once)

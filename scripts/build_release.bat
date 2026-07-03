@@ -1,87 +1,66 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-set "QT_ENV=C:\Qt\6.10.1\mingw_64\bin\qtenv2.bat"
-set "CMAKE_CMD=C:\Qt\Tools\CMake_64\bin\cmake.exe"
-set "PROJECT_DIR=C:\Users\Motan\Documents\s3rpent_media"
-set "BUILD_DIR=C:\Users\Motan\Documents\s3rpent_media\build\Release"
-set "BINARY=%BUILD_DIR%\apps3rpent_media.exe"
-set "WINDEPLOYQT=C:\Qt\6.10.1\mingw_64\bin\windeployqt.exe"
+REM ============================================================================
+REM S3rpent Media - Release Build Wrapper
+REM ============================================================================
+REM This batch file calls the PowerShell build script which uses:
+REM   - Qt 6.11.0 with MSVC 2022
+REM   - Ninja generator for faster builds
+REM   - vcpkg for libarchive dependency
+REM   - Auto-detected project directory
+REM ============================================================================
+
+set "SCRIPT_DIR=%~dp0"
+set "PS_SCRIPT=%SCRIPT_DIR%build_app_6110_msvc_release_ps.ps1"
 
 echo ========================================
 echo   S3rpent Media - Release Build
 echo ========================================
 echo.
+echo This will build using MSVC + Qt 6.11.0
+echo.
 
-echo Setting up environment for Qt 6.10.1...
-if exist "%QT_ENV%" (
-    call "%QT_ENV%" >nul 2>&1
+REM Check if PowerShell script exists
+if not exist "%PS_SCRIPT%" (
+    echo Error: PowerShell script not found at:
+    echo   %PS_SCRIPT%
+    echo.
+    echo Please ensure build_app_6110_msvc_release_ps.ps1 exists in the scripts folder.
+    goto :END
 )
 
-REM Add Qt and MinGW to PATH manually as backup
-set "PATH=C:\Qt\6.10.1\mingw_64\bin;C:\Qt\Tools\mingw1310_64\bin;%PATH%"
+REM Check for G:\b directory
+if exist "G:\b\" (
+    echo Build directory: G:\b\s3_rel (short path)
+) else (
+    echo Build directory: project_dir\build\rel (G:\b not found)
+)
+echo.
 
-REM Check for --clean argument
+REM Parse arguments
+set "CLEAN_ARG="
 if "%~1"=="--clean" (
-    echo Cleaning build directory...
-    if exist "%BUILD_DIR%" rmdir /s /q "%BUILD_DIR%"
+    set "CLEAN_ARG=-clean"
+    echo Clean build requested.
+    echo.
 )
 
-REM Create build directory if it doesn't exist
-if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
-
-REM Configure with CMake if not already configured
-if not exist "%BUILD_DIR%\CMakeCache.txt" (
-    echo Configuring project with CMake [Release mode]...
-    "%CMAKE_CMD%" -S "%PROJECT_DIR%" -B "%BUILD_DIR%" -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="C:/Qt/6.10.1/mingw_64"
-    if !errorlevel! neq 0 (
-        echo CMake configuration failed.
-        goto :END
-    )
-)
-
+REM Run PowerShell script with execution policy bypass
+echo Starting PowerShell build script...
 echo.
-echo Building Qt project in Release mode...
-"%CMAKE_CMD%" --build "%BUILD_DIR%" --target all
+powershell.exe -ExecutionPolicy Bypass -File "%PS_SCRIPT%" %CLEAN_ARG%
 
 if !errorlevel! neq 0 (
-    echo Build failed.
+    echo.
+    echo Build script failed with error code !errorlevel!.
     goto :END
 )
 
 echo.
 echo ========================================
-echo   Build succeeded!
+echo   Build wrapper completed!
 echo ========================================
-echo.
-echo Running windeployqt...
-
-if not exist "%WINDEPLOYQT%" (
-    echo Error: windeployqt.exe not found at %WINDEPLOYQT%.
-    goto :END
-)
-
-if not exist "%BINARY%" (
-    echo Error: Built binary not found at %BINARY%.
-    goto :END
-)
-
-"%WINDEPLOYQT%" --release --qmldir "%PROJECT_DIR%" "%BINARY%"
-
-if !errorlevel! neq 0 (
-    echo Deployment failed.
-    goto :END
-)
-
-echo.
-echo ========================================
-echo   Deployment succeeded!
-echo ========================================
-echo.
-echo Release build location: %BUILD_DIR%
-echo Executable: %BINARY%
-echo.
-echo Note: This is a GUI application [no console window]
 
 :END
 echo.

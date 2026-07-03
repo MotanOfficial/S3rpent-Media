@@ -5,6 +5,11 @@
 #include <algorithm>
 #include <cmath>
 
+namespace {
+// WASAPI loopback is the system render mix; per-app contribution is quieter than CustomAudioPlayer direct taps.
+constexpr qreal kWasapiLoopbackGain = 4.5;
+}
+
 #ifdef Q_OS_WIN
 #include <comdef.h>
 #include <comip.h>
@@ -54,9 +59,20 @@ AudioVisualizer::~AudioVisualizer()
 
 void AudioVisualizer::setMediaPlayer(QObject *mediaPlayer)
 {
+    // CustomAudioPlayer feeds samples via feedAudioSamples() (sets m_useDirectFeed true) and
+    // skips WASAPI setup in start(). Switching to QMediaPlayer requires loopback — restart if active.
+    const bool wasActive = m_active;
+    if (wasActive) {
+        stop();
+    }
+
     m_mediaPlayer = mediaPlayer;
     m_player = qobject_cast<QMediaPlayer*>(mediaPlayer);
-    qDebug() << "[AudioVisualizer] Media player set";
+    m_useDirectFeed = false;
+
+    if (wasActive) {
+        start();
+    }
 }
 
 void AudioVisualizer::start()
@@ -70,13 +86,10 @@ void AudioVisualizer::start()
 #ifdef Q_OS_WIN
         if (setupWindowsLoopback()) {
             m_captureTimer->start();
-            qDebug() << "[AudioVisualizer] Started with Windows WASAPI loopback";
         } else {
             qWarning() << "[AudioVisualizer] Failed to setup WASAPI loopback, using fallback";
         }
 #endif
-    } else {
-        qDebug() << "[AudioVisualizer] Started with direct audio feed (no WASAPI loopback)";
     }
     
     m_active = true;
@@ -108,11 +121,10 @@ void AudioVisualizer::stop()
     m_overallAmplitude = 0.0;
     
     m_active = false;
+    m_useDirectFeed = false;
     emit activeChanged();
     emit frequencyBandsChanged();
     emit overallAmplitudeChanged();
-    
-    qDebug() << "[AudioVisualizer] Stopped";
 }
 
 #ifdef Q_OS_WIN
@@ -320,10 +332,12 @@ void AudioVisualizer::processAudioSamples()
                 newSamples.reserve(sampleCount);
                 
                 for (int i = 0; i < sampleCount; i += 2) {
-                    // Average stereo channels
+                    // Average stereo channels; boost loopback to match direct-feed sensitivity for visuals
                     qreal left = samples[i] / 32768.0;
                     qreal right = samples[i + 1] / 32768.0;
-                    newSamples.append((left + right) / 2.0);
+                    qreal mono = (left + right) / 2.0;
+                    mono = qBound(-1.0, mono * kWasapiLoopbackGain, 1.0);
+                    newSamples.append(mono);
                 }
                 
                 m_samples.append(newSamples);

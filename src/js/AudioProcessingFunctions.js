@@ -11,11 +11,15 @@ function extractAudioCoverArt(params) {
         }
         return
     }
+
+    const sourceAtSchedule = currentImage.toString()
     
     // Use C++ helper to extract cover art - call asynchronously to avoid blocking UI
     // Defer color extraction to after cover art is ready (non-blocking)
     if (typeof ColorUtils !== "undefined" && ColorUtils.extractCoverArt) {
         Qt.callLater(function() {
+            if (currentImage.toString() !== sourceAtSchedule)
+                return
             const coverArtUrl = AudioUtils.extractAudioCoverArt(currentImage, ColorUtils.extractCoverArt)
             if (coverArtUrl && coverArtUrl !== "") {
                 // Call the callback to set the cover art
@@ -24,6 +28,8 @@ function extractAudioCoverArt(params) {
                 }
                 // Update accent color from cover art (also deferred, non-blocking)
                 Qt.callLater(function() {
+                    if (currentImage.toString() !== sourceAtSchedule)
+                        return
                     if (updateAccentColor) {
                         updateAccentColor()
                     }
@@ -63,14 +69,14 @@ function getAudioFormatInfo(params) {
     if (typeof ColorUtils !== "undefined" && ColorUtils.getAudioFormatInfo) {
         const formatInfo = AudioUtils.getAudioFormatInfo(currentImage, durationMs, ColorUtils.getAudioFormatInfo, audioFormatInfo)
         
-        // Refresh metadata if popup is open
-        if (showingMetadata && getMetadataList) {
-            Qt.callLater(function() {
-                if (metadataPopup) {
-                    metadataPopup.metadataList = getMetadataList()
-                }
-            })
-        }
+        // Refresh metadata list whenever format info is resolved (popup may be closed).
+        Qt.callLater(function() {
+            if (params.metadataPopupManager && typeof params.metadataPopupManager.updateMetadataList === "function") {
+                params.metadataPopupManager.updateMetadataList()
+            } else if (showingMetadata && getMetadataList && metadataPopup) {
+                metadataPopup.metadataList = getMetadataList()
+            }
+        })
         
         return formatInfo
     } else {

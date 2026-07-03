@@ -35,15 +35,47 @@ Item {
     property bool isTranslating: false
     property int instantDuration: 0  // Duration from C++ helper (instant, before player loads)
     property int _lastEmittedDuration: 0  // Track last emitted duration to prevent infinite loops
+    property var appWindowRef: null
+    property var _queueThumbCache: ({})
+    property bool _isRemoteUpdate: false
+    property bool _syncingVolume: false  // Guard against volume sync recursion
+    // Enable drag logs when debug console is enabled.
+    property bool debugQueueDrag: appWindowRef ? !!appWindowRef.debugConsoleEnabled : false
     
-    // Computed properties to avoid repeated ternary expressions
-    readonly property var currentPlayer: (betaAudioProcessingEnabled && customPlayer) ? customPlayer : player
-    readonly property int currentPlaybackState: currentPlayer ? currentPlayer.playbackState : MediaPlayer.StoppedState
-    readonly property var currentMetaData: (betaAudioProcessingEnabled && customPlayer && customPlayer.metaData) 
-        ? customPlayer.metaData 
-        : (player.metaData ? player.metaData : {})
-    readonly property int currentPosition: (betaAudioProcessingEnabled && customPlayer) ? customPlayer.position : player.position
-    readonly property int _playerDuration: (betaAudioProcessingEnabled && customPlayer) ? customPlayer.duration : player.duration
+    // --- WebRTC metadata properties ---
+    // These are explicitly defined so WebRTC sync can set them and getMetaString can find them.
+    property string webRTCTitle: ""
+    property string webRTCArtist: ""
+    property string webRTCAlbum: ""
+    // -----------------------------------
+
+    function _thumbKey(url) {
+        if (!url || url === "") return ""
+        const s = url.toString()
+        return s.replace(/\\/g, "/").toLowerCase()
+    }
+
+    function queueThumbFor(url) {
+        const key = _thumbKey(url)
+        if (!key) return ""
+        if (_queueThumbCache[key] !== undefined) {
+            return _queueThumbCache[key]
+        }
+        _queueThumbCache[key] = "" // placeholder to prevent duplicate work
+        Qt.callLater(function() {
+            try {
+                if (typeof ColorUtils !== "undefined" && ColorUtils.extractCoverArt) {
+                    const art = ColorUtils.extractCoverArt(url)
+                    if (art && art.toString && art.toString() !== "") {
+                        _queueThumbCache[key] = art
+                    }
+                }
+            } catch (e) {
+                // ignore
+            }
+        })
+        return ""
+    }
     
     // Debounced seeking properties
     property bool _isSeeking: false
@@ -53,12 +85,53 @@ Item {
     
     // Custom audio player for real EQ processing
     property CustomAudioPlayer customPlayer: null
+
+    // HTTP(S) streams: with beta audio on, CustomAudioPlayer + QAudioDecoder (same path as files — FFT/EQ/processor).
+    // With beta off, Qt MediaPlayer is used for streams.
+    readonly property bool _sourceIsNetworkStream: {
+        if (source === "" || !source)
+            return false
+        const u = source.toString()
+        return u.indexOf("http://") === 0 || u.indexOf("https://") === 0
+    }
+    readonly property bool useBetaDecoderPath: betaAudioProcessingEnabled && customPlayer
+
+    // Computed properties to avoid repeated ternary expressions
+    readonly property var currentPlayer: useBetaDecoderPath ? customPlayer : player
+    readonly property int currentPlaybackState: currentPlayer ? currentPlayer.playbackState : MediaPlayer.StoppedState
+    readonly property var currentMetaData: (useBetaDecoderPath && customPlayer.metaData)
+        ? customPlayer.metaData
+        : (player.metaData ? player.metaData : {})
+    readonly property int currentPosition: useBetaDecoderPath ? customPlayer.position : player.position
+    readonly property int _playerDuration: useBetaDecoderPath ? customPlayer.duration : player.duration
     
     // Discord Rich Presence integration
     DiscordRPC {
         id: discordRPC
         // Settings are loaded automatically in C++ constructor
         // Can be overridden by external property binding
+    }
+
+    // Listen Together manager is owned by ListenTogetherBridge (app-level).
+    property var webRTCManager: null
+    // Survives brief StoppedState while the decoder reloads on track change.
+    property bool listenTogetherWantsPlayback: false
+
+    // Optional music video display (e.g., YouTube provides a video-only stream URL)
+    property url musicVideoSource: ""
+    // Default OFF: user must press the button to switch from cover → video.
+    property bool musicVideoEnabled: false
+    readonly property bool musicVideoUiEnabled: appWindowRef && appWindowRef.musicVideoFeatureEnabled
+
+    onMusicVideoSourceChanged: {
+        // Ensure we don't keep showing a stale video after track switches.
+        if (musicVideoPlayer) {
+            musicVideoPlayer.stop()
+            if (musicVideoEnabled && musicVideoSource && musicVideoSource !== "" && audioPlayer.playbackState === MediaPlayer.PlayingState) {
+                musicVideoPlayer.position = audioPlayer.currentPosition
+                musicVideoPlayer.play()
+            }
+        }
     }
     
     // Property to control Discord RPC from settings
@@ -88,7 +161,7 @@ Item {
                     if (discordRPC && discordRPC.enabled && source !== "") {
                         updateDiscordRPC()
                         // Also fetch cover art if we have metadata but no cover art URL yet
-                        const meta = (betaAudioProcessingEnabled && customPlayer && customPlayer.metaData) 
+                        const meta = (useBetaDecoderPath && customPlayer.metaData) 
                             ? customPlayer.metaData 
                             : (player.metaData ? player.metaData : {})
                         const title = getMetaString(MediaMetaData.Title) || getMetaString("Title") || ""
@@ -207,6 +280,7 @@ Item {
             }
             
             if (windowObj) {
+                audioPlayer.appWindowRef = windowObj
                 // Found the window, initialize Windows Media Session after a short delay
                 // to ensure the window is fully created and has a valid HWND
                 Qt.callLater(function() {
@@ -219,11 +293,7 @@ Item {
         
         // Handle Windows media control commands
         onPlayRequested: {
-            if (betaAudioProcessingEnabled && customPlayer) {
-                customPlayer.play()
-            } else {
-                player.play()
-            }
+            audioPlayer.play()
             // Update Windows Media Session immediately to keep it in sync
             // Use a short delay to ensure state change has propagated
             Qt.callLater(function() {
@@ -231,7 +301,7 @@ Item {
             }, 100)
         }
         onPauseRequested: {
-            if (betaAudioProcessingEnabled && customPlayer) {
+            if (useBetaDecoderPath) {
                 customPlayer.pause()
             } else {
                 player.pause()
@@ -256,9 +326,9 @@ Item {
                 if (windowsMediaSession) {
                     windowsMediaSession.updatePlaybackState(2) // Paused
                 }
-            if (betaAudioProcessingEnabled && customPlayer) {
+                if (useBetaDecoderPath) {
                     customPlayer.pause()
-            } else {
+                } else {
                     player.pause()
                 }
             } else {
@@ -268,11 +338,7 @@ Item {
                 if (windowsMediaSession) {
                     windowsMediaSession.updatePlaybackState(1) // Playing
                 }
-                if (betaAudioProcessingEnabled && customPlayer) {
-                    customPlayer.play()
-                } else {
-                    player.play()
-                }
+                audioPlayer.play()
             }
             
             // Also update after state change propagates (onPlaybackStateChanged will also handle this)
@@ -281,12 +347,25 @@ Item {
             }, 100)
         }
         onNextRequested: {
-            // Could implement next track if you have a playlist
-            console.log("[WindowsMediaSession] Next requested")
+            if (audioPlayer.appWindowRef && typeof audioPlayer.appWindowRef.playNextInQueue === "function") {
+                audioPlayer.appWindowRef.playNextInQueue()
+            }
         }
         onPreviousRequested: {
-            // Could implement previous track if you have a playlist
-            console.log("[WindowsMediaSession] Previous requested")
+            if (audioPlayer.appWindowRef && typeof audioPlayer.appWindowRef.playPreviousInQueue === "function") {
+                audioPlayer.appWindowRef.playPreviousInQueue()
+            }
+        }
+    }
+
+    function maybeAutoAdvanceOnStop() {
+        if (!audioPlayer.appWindowRef || typeof audioPlayer.appWindowRef.onActiveMediaFinished !== "function") {
+            return
+        }
+        const d = audioPlayer.duration
+        if (d <= 0) return
+        if (audioPlayer.position >= (d - 500)) {
+            audioPlayer.appWindowRef.onActiveMediaFinished()
         }
     }
     
@@ -422,7 +501,16 @@ Item {
     }
     
     // Function to fetch cover art if needed (consolidates duplicate logic)
+    function resetCoverArtFetchCache() {
+        coverArtClient.fetchedCoverArtUrl = ""
+        lastFMClient.fetchedCoverArtUrl = ""
+    }
+
     function fetchCoverArtIfNeeded() {
+        // Remote Listen Together client: cover comes from streamed file / host push, not online APIs.
+        if (webRTCManager && webRTCManager.isConnected && !webRTCManager.isHost)
+            return
+
         // Get metadata using computed property
         const meta = currentMetaData
         if (!meta) return
@@ -459,6 +547,96 @@ Item {
             }
         }
     }
+
+    // Beta path: duration comes from CustomAudioPlayer (QMediaPlayer metadata + decoder).
+    // Avoid ColorUtils.getAudioDuration() here — that spins a second QMediaPlayer + blocking QEventLoop (~1s).
+    Connections {
+        target: customPlayer
+        enabled: useBetaDecoderPath
+        function onDurationChanged() {
+            if (!useBetaDecoderPath || audioPlayer.source === "")
+                return
+            const d = customPlayer.duration
+            if (d <= 0)
+                return
+            if (webRTCManager && webRTCManager.isConnected && !webRTCManager.isHost
+                    && webRTCManager.streamDuration > 0) {
+                const src = audioPlayer.source ? audioPlayer.source.toString() : ""
+                if (src.indexOf("s3rpent_stream_") >= 0) {
+                    const hostDur = webRTCManager.streamDuration
+                    if (Math.abs(d - hostDur) > 250) {
+                        instantDuration = hostDur
+                        _lastEmittedDuration = hostDur
+                        durationAvailable()
+                        return
+                    }
+                }
+            }
+            if (Math.abs(d - _lastEmittedDuration) <= 100 && instantDuration > 0)
+                return
+            instantDuration = d
+            _lastEmittedDuration = d
+            durationAvailable()
+            Qt.callLater(function() {
+                if (audioPlayer.source !== "") {
+                    checkMetadataInitialized()
+                    fetchLyrics()
+                }
+            })
+        }
+    }
+
+    // Debounced: after burst of FFmpeg errors on YouTube CDN, re-run yt-dlp for a new signed URL.
+    property int _lastNetworkAudioErrorLogMs: 0
+    /** Last http(s) URL from AudioPlayer.source; kept when source is briefly "" during player reopen. */
+    property string _lastHttpAudioContextUrl: ""
+    function _effectiveNetworkStream() {
+        if (_lastHttpAudioContextUrl !== "")
+            return true
+        if (source === "" || !source)
+            return false
+        const u = source.toString()
+        if (u.indexOf("http://") === 0 || u.indexOf("https://") === 0)
+            return true
+        if (player && player.source) {
+            const pu = player.source.toString()
+            return pu.indexOf("http://") === 0 || pu.indexOf("https://") === 0
+        }
+        return false
+    }
+    Timer {
+        id: youtubeStreamRecoverTimer
+        interval: 3000
+        repeat: false
+        onTriggered: {
+            const w = audioPlayer.appWindowRef
+            if (!w || typeof w.restartYoutubeStreamFromPageUrl !== "function")
+                return
+            if (!audioPlayer._effectiveNetworkStream())
+                return
+            // Do not yank playback while the user has explicitly paused.
+            if (audioPlayer.playbackState === MediaPlayer.PausedState)
+                return
+            w.restartYoutubeStreamFromPageUrl()
+        }
+    }
+    function _scheduleYoutubeStreamRecover() {
+        if (!_effectiveNetworkStream())
+            return
+        const w = appWindowRef
+        if (!w || !(w.lastPlayedYoutubeWatchUrl && w.lastPlayedYoutubeWatchUrl !== ""))
+            return
+        youtubeStreamRecoverTimer.restart()
+    }
+
+    /** Qt MediaPlayer resets AudioOutput level when source changes; re-apply saved model volume. */
+    function syncVolumeToQtOutput() {
+        if (!player || !player.audioOutput)
+            return
+        const v = audioPlayer.volume
+        if (Math.abs(player.audioOutput.volume - v) > 0.001)
+            player.audioOutput.volume = v
+    }
     
     MediaPlayer {
         id: player
@@ -469,16 +647,60 @@ Item {
             }
         }
         onErrorOccurred: function(error, errorString) {
-            // Always log errors, even in production
-            console.error("[Audio] Error occurred:", error, errorString)
+            const msg = (errorString !== undefined && errorString !== null) ? String(errorString) : ""
+            if (audioPlayer._effectiveNetworkStream()) {
+                const now = (new Date()).getTime()
+                if (audioPlayer._lastNetworkAudioErrorLogMs === 0
+                        || now - audioPlayer._lastNetworkAudioErrorLogMs >= 5000) {
+                    console.error("[Audio] Error occurred:", error, msg || "(no message)")
+                    audioPlayer._lastNetworkAudioErrorLogMs = now
+                }
+                audioPlayer._scheduleYoutubeStreamRecover()
+                return
+            }
+            console.error("[Audio] Error occurred:", error, msg)
+        }
+    }
+
+    // Video-only player for "music video" mode (muted; audio continues via the main pipeline)
+    MediaPlayer {
+        id: musicVideoPlayer
+        audioOutput: AudioOutput { volume: 0.0 }
+        videoOutput: musicVideoOutput
+        source: (musicVideoEnabled && musicVideoSource && musicVideoSource !== "") ? musicVideoSource : ""
+    }
+
+    property int _lastMusicVideoSeekWallMs: 0
+
+    Timer {
+        id: musicVideoSyncTimer
+        interval: 900
+        repeat: true
+        running: musicVideoEnabled && musicVideoSource && musicVideoSource !== "" && (audioPlayer.playbackState === MediaPlayer.PlayingState)
+        onTriggered: {
+            if (!musicVideoPlayer || musicVideoPlayer.source === "")
+                return
+            const ap = audioPlayer.currentPosition
+            const vp = musicVideoPlayer.position
+            const drift = Math.abs(vp - ap)
+            if (drift < 2800)
+                return
+            const now = Date.now()
+            if ((now - _lastMusicVideoSeekWallMs) < 3200 && drift < 8000)
+                return
+            _lastMusicVideoSeekWallMs = now
+            musicVideoPlayer.position = ap
         }
     }
     
     Connections {
         target: player.audioOutput
         function onVolumeChanged(vol) {
+            if (_syncingVolume) return
             if (Math.abs(audioPlayer.volume - vol) > 0.001) {
+                _syncingVolume = true
                 audioPlayer.volume = vol
+                _syncingVolume = false
             }
         }
     }
@@ -495,6 +717,18 @@ Item {
             updateWindowsMediaSessionPlaybackState()
             // Update Discord RPC on state change
             updateDiscordRPC()
+            // Broadcast to WebRTC peers if connected
+            if (webRTCManager && webRTCManager.isConnected) {
+                if (!webRTCManager._syncing) {
+                    if (player.playbackState === MediaPlayer.PlayingState) {
+                        listenTogetherWantsPlayback = true
+                        webRTCManager.broadcastPlay()
+                    } else if (player.playbackState === MediaPlayer.PausedState) {
+                        listenTogetherWantsPlayback = false
+                        webRTCManager.broadcastPause()
+                    }
+                }
+            }
             if (player.playbackState === MediaPlayer.PlayingState) {
                 showControls = true
                 controlsHideTimer.start()
@@ -510,6 +744,10 @@ Item {
             } else {
                 showControls = true
                 controlsHideTimer.stop()
+            }
+
+            if (player.playbackState === MediaPlayer.StoppedState) {
+                maybeAutoAdvanceOnStop()
             }
         }
         function onSourceChanged() {
@@ -542,16 +780,40 @@ Item {
             checkMetadataInitialized()
             // Update Discord RPC when metadata changes (only if initialized)
             updateDiscordRPC()
+            // Sync metadata to WebRTC peers when metadata becomes available
+            if (webRTCManager && webRTCManager.isConnected && !webRTCManager._syncing) {
+                Qt.callLater(function() {
+                    webRTCManager.syncMetadataToWebRTC()
+                })
+            }
+        }
+    }
+
+    onPlaybackStateChanged: {
+        if (!musicVideoPlayer || musicVideoPlayer.source === "")
+            return
+        if (audioPlayer.playbackState === MediaPlayer.PlayingState) {
+            // Keep video roughly aligned before starting
+            musicVideoPlayer.position = audioPlayer.currentPosition
+            _lastMusicVideoSeekWallMs = Date.now()
+            musicVideoPlayer.play()
+        } else if (audioPlayer.playbackState === MediaPlayer.PausedState) {
+            musicVideoPlayer.pause()
+        } else if (audioPlayer.playbackState === MediaPlayer.StoppedState) {
+            musicVideoPlayer.stop()
         }
     }
     
     // Connections for CustomAudioPlayer when beta processing is enabled
     Connections {
-        target: (betaAudioProcessingEnabled && customPlayer) ? customPlayer : null
+        target: (useBetaDecoderPath) ? customPlayer : null
         function onVolumeChanged() {
             if (customPlayer && Math.abs(audioPlayer.volume - customPlayer.volume) > 0.001) {
                 // Sync CustomAudioPlayer's volume (loaded from Settings) to AudioPlayer's volume property
+                if (_syncingVolume) return
+                _syncingVolume = true
                 audioPlayer.volume = customPlayer.volume
+                _syncingVolume = false
             }
         }
         // Removed onDurationChanged - using instant duration from C++ helper instead
@@ -565,6 +827,18 @@ Item {
                 updateWindowsMediaSessionPlaybackState()
                 // Update Discord RPC on state change
                 updateDiscordRPC()
+                // Broadcast to WebRTC peers if connected
+                if (webRTCManager && webRTCManager.isConnected) {
+                    if (!webRTCManager._syncing) {
+                        if (customPlayer.playbackState === CustomAudioPlayer.PlayingState) {
+                            listenTogetherWantsPlayback = true
+                            webRTCManager.broadcastPlay()
+                        } else if (customPlayer.playbackState === CustomAudioPlayer.PausedState) {
+                            listenTogetherWantsPlayback = false
+                            webRTCManager.broadcastPause()
+                        }
+                    }
+                }
                 if (customPlayer.playbackState === CustomAudioPlayer.PlayingState) {
                     showControls = true
                     controlsHideTimer.start()
@@ -580,6 +854,10 @@ Item {
                 } else {
                     showControls = true
                     controlsHideTimer.stop()
+                }
+
+                if (customPlayer.playbackState === CustomAudioPlayer.StoppedState) {
+                    maybeAutoAdvanceOnStop()
                 }
             }
         }
@@ -598,6 +876,12 @@ Item {
                 checkMetadataInitialized()
                 // Update Discord RPC when metadata changes (only if initialized)
                 updateDiscordRPC()
+                // Sync metadata to WebRTC peers when metadata becomes available
+                if (webRTCManager && webRTCManager.isConnected && !webRTCManager._syncing) {
+                    Qt.callLater(function() {
+                        webRTCManager.syncMetadataToWebRTC()
+                    })
+                }
             }
         }
         function onPositionChanged() {
@@ -664,22 +948,8 @@ Item {
             _lastCommittedSeekPos = pos
             _isSeeking = false
             
-            // Preserve playback state - don't auto-start if paused
-            const wasPlaying = currentPlaybackState === MediaPlayer.PlayingState
-            
-            if (betaAudioProcessingEnabled && customPlayer) {
-                // CustomPlayer now handles state preservation internally
-                customPlayer.seek(pos)
-            } else {
-                // For QMediaPlayer, we need to manually preserve state
-                player.position = pos
-                // Restore playback state after a brief delay (QMediaPlayer might auto-resume)
-                Qt.callLater(function() {
-                    if (!wasPlaying && player.playbackState === MediaPlayer.PlayingState) {
-                        player.pause()
-                    }
-                })
-            }
+            // Use seekToPosition to handle broadcast and playback state preservation
+            seekToPosition(pos)
         }
     }
     
@@ -980,7 +1250,7 @@ Item {
         artistName = cleanArtistName(artistName)
         
         if (originalArtistName !== artistName && debugMode) {
-            console.log("[Lyrics] Cleaned artist name:", originalArtistName, "->", artistName)
+            console.log("[WebRTC][" + (webRTCManager.isHost ? "HOST" : "CLIENT") + "] Cleaned artist name:", originalArtistName, "->", artistName)
         }
         
         // Create a signature for this song to avoid duplicate fetches (without duration)
@@ -1006,6 +1276,51 @@ Item {
         lyricsClient.fetchLyrics(trackName, artistName, albumName, 0)  // Pass 0 to indicate no duration
     }
     
+    // Listen Together sync status (visible during P2P track transfer / sync gate)
+    Rectangle {
+        id: listenTogetherSyncBanner
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.topMargin: 16
+        width: Math.min(syncBannerText.implicitWidth + 28, parent.width - 32)
+        height: 36
+        radius: 18
+        color: Qt.rgba(0, 0, 0, 0.72)
+        border.color: Qt.rgba(0.45, 0.75, 1.0, 0.45)
+        border.width: 1
+        visible: webRTCManager && webRTCManager.isConnected
+                 && webRTCManager.syncStatus !== ""
+                 && webRTCManager.syncStatus !== "idle"
+        z: 50
+
+        Row {
+            anchors.centerIn: parent
+            spacing: 8
+
+            Rectangle {
+                width: 8
+                height: 8
+                radius: 4
+                anchors.verticalCenter: parent.verticalCenter
+                color: "#64b5f6"
+
+                SequentialAnimation on opacity {
+                    running: listenTogetherSyncBanner.visible
+                    loops: Animation.Infinite
+                    PropertyAnimation { to: 0.35; duration: 600 }
+                    PropertyAnimation { to: 1.0; duration: 600 }
+                }
+            }
+
+            Text {
+                id: syncBannerText
+                text: webRTCManager ? webRTCManager.syncStatusLabel : ""
+                color: "#ffffff"
+                font.pixelSize: 12
+            }
+        }
+    }
+
     // Audio controls overlay
     Item {
         id: controlsContainer
@@ -1042,46 +1357,57 @@ Item {
             duration: audioPlayer.duration  // Use AudioPlayer's duration property which uses instantDuration when available
             volume: audioPlayer.volume
             playbackState: currentPlaybackState
-            seekable: (betaAudioProcessingEnabled && customPlayer) ? customPlayer.seekable : player.seekable
+            seekable: (useBetaDecoderPath) ? customPlayer.seekable : player.seekable
             accentColor: audioPlayer.accentColor
-            muted: (betaAudioProcessingEnabled && customPlayer) 
+            muted: (useBetaDecoderPath) 
                    ? (customPlayer.volume === 0 && audioPlayer.volume > 0)
                    : (player.audioOutput.volume === 0 && audioPlayer.volume > 0)
             pitch: audioPlayer.currentPitch
             tempo: (!betaAudioProcessingEnabled) ? (player.playbackRate || 1.0) : 1.0
-            loop: (betaAudioProcessingEnabled && customPlayer) ? customPlayer.loop : (player.loops === MediaPlayer.Infinite)
-            
+            loop: (useBetaDecoderPath) ? customPlayer.loop : (player.loops === MediaPlayer.Infinite)
+
             // Initialize EQ enabled state from saved settings
             Component.onCompleted: {
-                if (betaAudioProcessingEnabled && customPlayer) {
+                if (useBetaDecoderPath) {
                     eqEnabled = customPlayer.isEQEnabled()
                 }
             }
-            
+
             onPlayClicked: {
-                // CRITICAL: Stop the other player first to prevent dual playback
-                if (betaAudioProcessingEnabled && customPlayer) {
-                    player.stop()  // Stop regular player
-                    customPlayer.play()
-                } else {
-                    if (customPlayer) {
-                        customPlayer.stop()  // Stop custom player
-                    }
-                    player.play()
-                }
+                audioPlayer.play()
                 showControls = true
                 controlsHideTimer.restart()
             }
-            
+
+            onPreviousClicked: {
+                if (audioPlayer.appWindowRef && typeof audioPlayer.appWindowRef.previousImage === "function") {
+                    audioPlayer.appWindowRef.previousImage()
+                }
+                showControls = true
+                if (currentPlaybackState === MediaPlayer.PlayingState) {
+                    controlsHideTimer.restart()
+                }
+            }
+
+            onNextClicked: {
+                if (audioPlayer.appWindowRef && typeof audioPlayer.appWindowRef.nextImage === "function") {
+                    audioPlayer.appWindowRef.nextImage()
+                }
+                showControls = true
+                if (currentPlaybackState === MediaPlayer.PlayingState) {
+                    controlsHideTimer.restart()
+                }
+            }
+
             onPauseClicked: {
-                if (betaAudioProcessingEnabled && customPlayer) {
+                if (useBetaDecoderPath) {
                     customPlayer.pause()
                 } else {
                     player.pause()
                 }
                 showControls = true
             }
-            
+
             onSeekRequested: function(pos) {
                 // Debounced seeking: update preview immediately, commit after pause or on release
                 _seekSpamCount++  // Debug counter
@@ -1089,13 +1415,13 @@ Item {
                 // Clamp position to valid range
                 const duration = audioPlayer.duration
                 _pendingSeekPos = Math.max(0, Math.min(pos, duration > 0 ? duration - 1 : pos))
-                
+
                 // Restart the commit timer - this collapses many seeks into one
                 // If user keeps dragging, timer keeps restarting
                 // Only when they pause or release does it actually seek
                 seekCommitTimer.restart()
             }
-            
+
             // If AudioControls exposes seekReleased signal, handle it here
             // Otherwise, the debounce timer will handle it after 120ms pause
             onSeekReleased: {
@@ -1106,13 +1432,18 @@ Item {
                     seekCommitTimer.triggered()
                 }
             }
-            
+
             onVolumeAdjusted: function(vol) {
+                if (_syncingVolume) return
+                _syncingVolume = true
                 audioPlayer.volume = vol
-                if (betaAudioProcessingEnabled && customPlayer) {
+                if (useBetaDecoderPath) {
                     customPlayer.volume = vol
                 } else {
-                    player.audioOutput.volume = vol
+                    if (player.audioOutput)
+                        player.audioOutput.volume = vol
+                    if (vol > 0 && customPlayer)
+                        customPlayer.volume = vol
                 }
                 // If volume is adjusted while muted, unmute and update saved volume
                 if (vol > 0 && audioPlayer.savedVolume === 0) {
@@ -1120,10 +1451,11 @@ Item {
                 } else if (vol > 0) {
                     audioPlayer.savedVolume = vol
                 }
+                _syncingVolume = false
             }
-            
+
             onMuteToggled: function(isMuted) {
-                if (betaAudioProcessingEnabled && customPlayer) {
+                if (useBetaDecoderPath) {
                     // Handle mute for CustomAudioPlayer
                     if (isMuted) {
                         // Save current volume before muting (only if not already muted)
@@ -1161,15 +1493,19 @@ Item {
                         if (audioPlayer.savedVolume > 0) {
                             audioPlayer.volume = audioPlayer.savedVolume
                             player.audioOutput.volume = audioPlayer.savedVolume
+                            if (customPlayer)
+                                customPlayer.volume = audioPlayer.savedVolume
                         } else {
                             // If no saved volume, restore to a reasonable default (0.5)
                             audioPlayer.volume = 0.5
                             player.audioOutput.volume = 0.5
+                            if (customPlayer)
+                                customPlayer.volume = 0.5
                         }
                     }
                 }
             }
-            
+
             onPitchAdjusted: function(newPitch) {
                 // Note: Qt's MediaPlayer doesn't support pitch directly
                 // Pitch adjustment would require audio processing (e.g., using FFmpeg or audio effects)
@@ -1179,16 +1515,16 @@ Item {
                 console.log("[Audio] Pitch adjusted to:", newPitch, "(not applied - requires audio processing)")
                 }
             }
-            
+
             onTempoAdjusted: function(newTempo) {
                 player.playbackRate = newTempo
             }
-            
+
             onEqBandChanged: function(band, value) {
                 // AudioEqualizer now automatically syncs to CustomAudioPlayer when beta is enabled
                 if (equalizer) {
                     equalizer.setBandGain(band, value)
-                    if (betaAudioProcessingEnabled && customPlayer && debugMode) {
+                    if (useBetaDecoderPath && debugMode) {
                         console.log("[Audio] EQ band", band, "set to", value, "dB (real EQ via CustomAudioPlayer)")
                     } else if (equalizer.enabled) {
                         // Fallback to old volume-based EQ for non-beta mode
@@ -1200,12 +1536,12 @@ Item {
                     }
                 }
             }
-            
+
             onEqToggled: function(enabled) {
                 // AudioEqualizer now automatically syncs to CustomAudioPlayer when beta is enabled
                 if (equalizer) {
                     equalizer.setEnabled(enabled)
-                    if (betaAudioProcessingEnabled && customPlayer && debugMode) {
+                    if (useBetaDecoderPath && debugMode) {
                         console.log("[Audio] EQ", (enabled ? "enabled" : "disabled"), "(real EQ via CustomAudioPlayer)")
                     } else if (enabled) {
                         // Fallback to old volume-based EQ for non-beta mode
@@ -1218,22 +1554,682 @@ Item {
                 }
                 // Update the toggle state
             }
-            
+
             onLoopClicked: {
-                if (betaAudioProcessingEnabled && customPlayer) {
+                if (useBetaDecoderPath) {
                     customPlayer.loop = !customPlayer.loop
                 } else {
                     // Standard player loop (if supported)
                     player.loops = (player.loops === MediaPlayer.Once) ? MediaPlayer.Infinite : MediaPlayer.Once
                 }
             }
-            
+
             // Sync EQ enabled state when popup opens
             onShowEQChanged: {
-                if (audioControls.showEQ && betaAudioProcessingEnabled && customPlayer) {
+                if (audioControls.showEQ && useBetaDecoderPath) {
                     // Sync toggle with actual EQ state
                     audioControls.eqEnabled = customPlayer.isEQEnabled()
                 }
+            }
+
+            onQueueClicked: {
+                queuePopup.open()
+                showControls = true
+                if (currentPlaybackState === MediaPlayer.PlayingState) {
+                    controlsHideTimer.restart()
+                }
+            }
+        }
+
+    }
+
+
+    Popup {
+        id: queuePopup
+        modal: true
+        focus: true
+        // Find the root window/item for proper sizing and centering (match AudioControls EQ popup)
+        property var rootWindow: {
+            var item = audioPlayer.parent
+            while (item && item.parent) {
+                item = item.parent
+            }
+            return item
+        }
+        parent: rootWindow
+
+        width: Math.min(600, (rootWindow ? rootWindow.width - 80 : 600))
+        height: Math.min(450, (rootWindow ? rootWindow.height - 80 : 450))
+        closePolicy: Popup.CloseOnPressOutside | Popup.CloseOnEscape
+
+        x: rootWindow ? Math.max(0, (rootWindow.width - width) / 2) : 0
+        y: rootWindow ? Math.max(0, (rootWindow.height - height) / 2) : 0
+
+        background: Rectangle {
+            id: queuePopupBackground
+            radius: 20
+            color: Qt.rgba(
+                Qt.lighter(audioPlayer.accentColor, 1.3).r,
+                Qt.lighter(audioPlayer.accentColor, 1.3).g,
+                Qt.lighter(audioPlayer.accentColor, 1.3).b,
+                0.95
+            )
+            border.width: 0
+
+            layer.enabled: true
+            layer.effect: DropShadow {
+                transparentBorder: true
+                horizontalOffset: 0
+                verticalOffset: 4
+                radius: 16
+                samples: 32
+                color: Qt.rgba(0, 0, 0, 0.25)
+            }
+
+            scale: 0.9
+            opacity: 0
+            Behavior on scale { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
+            Behavior on opacity { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
+        }
+
+        onVisibleChanged: {
+            if (visible) {
+                queuePopupBackground.scale = 1.0
+                queuePopupBackground.opacity = 1.0
+            } else {
+                queuePopupBackground.scale = 0.9
+                queuePopupBackground.opacity = 0.0
+            }
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 0
+            spacing: 0
+
+            // Header (styled like EQ popup)
+            Rectangle {
+                id: queueHeader
+                Layout.fillWidth: true
+                Layout.preferredHeight: 56
+                color: "transparent"
+                radius: 20
+                clip: true
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 24
+                    anchors.rightMargin: 16
+                    spacing: 12
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Up Next"
+                        color: audioControls ? audioControls.iconColor : audioPlayer.foregroundColor
+                        font.pixelSize: 20
+                        font.weight: Font.Medium
+                        font.letterSpacing: 0.5
+                        elide: Text.ElideRight
+                    }
+
+                    Rectangle {
+                        id: queueCloseButton
+                        Layout.preferredWidth: 32
+                        Layout.preferredHeight: 32
+                        radius: 16
+                        color: queueCloseTap.pressed ? Qt.rgba(0, 0, 0, 0.1) : "transparent"
+
+                        Image {
+                            id: queueCloseIcon
+                            anchors.centerIn: parent
+                            source: "qrc:/qlementine/icons/16/action/windows-close.svg"
+                            sourceSize: Qt.size(16, 16)
+                            visible: false
+                        }
+                        ColorOverlay {
+                            anchors.fill: queueCloseIcon
+                            source: queueCloseIcon
+                            color: audioControls ? audioControls.iconColor : "#000000"
+                            opacity: 0.9
+                        }
+
+                        TapHandler {
+                            id: queueCloseTap
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            acceptedButtons: Qt.LeftButton
+                            gesturePolicy: TapHandler.ReleaseWithinBounds
+                            onTapped: queuePopup.close()
+                        }
+                        HoverHandler { cursorShape: Qt.PointingHandCursor }
+                    }
+                }
+            }
+
+            // Toolbar row
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 24
+                Layout.rightMargin: 24
+                Layout.bottomMargin: 8
+                spacing: 10
+
+                Rectangle {
+                    Layout.preferredHeight: 32
+                    Layout.preferredWidth: 110
+                    radius: 10
+                    color: Qt.rgba(0, 0, 0, 0.08)
+                    border.color: Qt.rgba(255, 255, 255, 0.18)
+                    border.width: 1
+                    opacity: (audioPlayer.appWindowRef && audioPlayer.appWindowRef.isAudio && audioPlayer.appWindowRef.directoryImages && audioPlayer.appWindowRef.directoryImages.length > 1) ? 1.0 : 0.4
+
+                    Text { anchors.centerIn: parent; text: "Add folder"; color: audioControls ? audioControls.iconColor : "#000"; font.pixelSize: 12; font.weight: Font.Medium }
+                    TapHandler {
+                        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                        acceptedButtons: Qt.LeftButton
+                        onTapped: {
+                            if (audioPlayer.appWindowRef) audioPlayer.appWindowRef.queueAddFolderAll()
+                        }
+                    }
+                    HoverHandler { cursorShape: Qt.PointingHandCursor }
+                }
+
+                Rectangle {
+                    Layout.preferredHeight: 32
+                    Layout.preferredWidth: 130
+                    radius: 10
+                    color: Qt.rgba(0, 0, 0, 0.08)
+                    border.color: Qt.rgba(255, 255, 255, 0.18)
+                    border.width: 1
+                    opacity: (audioPlayer.appWindowRef && audioPlayer.appWindowRef.isAudio && audioPlayer.appWindowRef.directoryImages && audioPlayer.appWindowRef.directoryImages.length > 1) ? 1.0 : 0.4
+
+                    Text { anchors.centerIn: parent; text: "Add remaining"; color: audioControls ? audioControls.iconColor : "#000"; font.pixelSize: 12; font.weight: Font.Medium }
+                    TapHandler {
+                        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                        acceptedButtons: Qt.LeftButton
+                        onTapped: {
+                            if (audioPlayer.appWindowRef) audioPlayer.appWindowRef.queueAddFolderRemaining()
+                        }
+                    }
+                    HoverHandler { cursorShape: Qt.PointingHandCursor }
+                }
+
+                Item { Layout.fillWidth: true }
+
+                Rectangle {
+                    Layout.preferredHeight: 32
+                    Layout.preferredWidth: 72
+                    radius: 10
+                    color: Qt.rgba(0, 0, 0, 0.08)
+                    border.color: Qt.rgba(255, 255, 255, 0.18)
+                    border.width: 1
+                    opacity: (audioPlayer.appWindowRef && audioPlayer.appWindowRef.playbackQueue && audioPlayer.appWindowRef.playbackQueue.length > 0) ? 1.0 : 0.4
+
+                    Text { anchors.centerIn: parent; text: "Clear"; color: audioControls ? audioControls.iconColor : "#000"; font.pixelSize: 12; font.weight: Font.Medium }
+                    TapHandler {
+                        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                        acceptedButtons: Qt.LeftButton
+                        onTapped: {
+                            if (audioPlayer.appWindowRef) audioPlayer.appWindowRef.clearQueue()
+                        }
+                    }
+                    HoverHandler { cursorShape: Qt.PointingHandCursor }
+                }
+            }
+
+            ListView {
+                id: queueList
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.leftMargin: 16
+                Layout.rightMargin: 16
+                Layout.bottomMargin: 16
+                clip: true
+                // Don't let the ListView steal pointer for flicking while reordering.
+                interactive: !dragActive
+                model: (audioPlayer.appWindowRef && audioPlayer.appWindowRef.playbackQueue) ? audioPlayer.appWindowRef.playbackQueue : []
+                property var winRef: audioPlayer.appWindowRef
+                property var popupRef: queuePopup
+                // Drag-reorder visual state (do not commit until release)
+                property bool dragActive: false
+                property int dragFromIndex: -1
+                property int dragHoverIndex: -1
+                property real dragOffsetY: 0
+                // Set true only while clearing drag so Translate snaps to 0 (avoids twitch vs moveQueueItem).
+                property bool skipShiftAnim: false
+
+                delegate: Rectangle {
+                    id: queueItem
+                    width: queueList.width
+                    height: 48
+                    radius: 12
+                    color: Qt.rgba(0, 0, 0, 0.08)
+                    border.color: Qt.rgba(255, 255, 255, 0.16)
+                    border.width: 1
+                    // ListView often won't show in-place Translate while dragging; ghost follows cursor instead.
+                    opacity: queueItem.dragging ? 0.28 : 1.0
+                    property var _winRef: (ListView.view && ListView.view.winRef) ? ListView.view.winRef : null
+                    property var _popupRef: (ListView.view && ListView.view.popupRef) ? ListView.view.popupRef : null
+                    property int _dragStartIndex: -1
+                    property real _dragTotalY: 0
+                    readonly property bool dragging: ListView.view && ListView.view.dragActive && ListView.view.dragFromIndex === index
+                    readonly property bool _isDragged: (ListView.view && ListView.view.dragActive && ListView.view.dragFromIndex === index)
+                    readonly property real _shiftY: {
+                        const v = ListView.view
+                        if (!v || !v.dragActive || v.dragFromIndex < 0 || v.dragHoverIndex < 0) return 0
+                        if (index === v.dragFromIndex) return 0
+                        const from = v.dragFromIndex
+                        const to = v.dragHoverIndex
+                        if (to > from) {
+                            // Dragging down: items between (from, to] shift up
+                            return (index > from && index <= to) ? -queueItem.height : 0
+                        } else if (to < from) {
+                            // Dragging up: items between [to, from) shift down
+                            return (index >= to && index < from) ? queueItem.height : 0
+                        }
+                        return 0
+                    }
+
+                    transform: Translate {
+                        id: queueTranslate
+                        // Do not apply dragOffsetY here — ghost row (queueDragGhost) shows live movement.
+                        y: queueItem._shiftY
+                        Behavior on y {
+                            // Animate preview shifts while dragging. On release, queueList.skipShiftAnim
+                            // is set so _shiftY resets without animating (avoids fighting moveQueueItem).
+                            enabled: !queueList.skipShiftAnim && !queueItem.dragging
+                            NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+                        }
+                    }
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 10
+                        spacing: 8
+
+                        Text {
+                            text: (index + 1) + "."
+                            color: Qt.rgba(0, 0, 0, 0.55)
+                            font.pixelSize: 12
+                        }
+
+                        Rectangle {
+                            Layout.preferredWidth: 34
+                            Layout.preferredHeight: 34
+                            radius: 10
+                            color: Qt.rgba(0, 0, 0, 0.06)
+                            border.color: Qt.rgba(255, 255, 255, 0.18)
+                            border.width: 1
+                            clip: true
+
+                            Image {
+                                anchors.fill: parent
+                                anchors.margins: 3
+                                source: audioPlayer.queueThumbFor(modelData)
+                                asynchronous: true
+                                fillMode: Image.PreserveAspectFit
+                                visible: source && source !== ""
+                            }
+                            Text {
+                                anchors.centerIn: parent
+                                text: "♪"
+                                color: audioControls ? audioControls.iconColor : "#000"
+                                opacity: 0.5
+                                visible: !(audioPlayer.queueThumbFor(modelData) && audioPlayer.queueThumbFor(modelData) !== "")
+                            }
+                        }
+
+                        // Drag handle (reorder preview; commit on release)
+                        Rectangle {
+                            id: dragHandle
+                            Layout.preferredWidth: 26
+                            Layout.preferredHeight: 34
+                            radius: 10
+                            color: Qt.rgba(0, 0, 0, 0.04)
+                            border.color: Qt.rgba(255, 255, 255, 0.14)
+                            border.width: 1
+
+                            Image {
+                                id: dragHandleIcon
+                                anchors.centerIn: parent
+                                width: 14
+                                height: 14
+                                source: "qrc:/qlementine/icons/16/navigation/menu-dots.svg"
+                                sourceSize: Qt.size(14, 14)
+                                visible: false
+                            }
+                            ColorOverlay {
+                                anchors.fill: dragHandleIcon
+                                source: dragHandleIcon
+                                color: audioControls ? audioControls.iconColor : "#000"
+                                opacity: 0.7
+                            }
+                            DragHandler {
+                                id: queueReorderDrag
+                                target: null
+                                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                grabPermissions: PointerHandler.CanTakeOverFromAnything
+
+                                onActiveChanged: {
+                                    if (active) {
+                                        if (audioPlayer.debugQueueDrag)
+                                            console.log("[QueueDrag] handle pressed index", index, "winRef?", !!queueItem._winRef)
+
+                                        queueDragHelper.startDrag(index, queueItem._winRef, modelData)
+                                        Qt.callLater(function() {
+                                            const dy = queueReorderDrag.centroid.scenePosition.y
+                                                       - queueReorderDrag.centroid.scenePressPosition.y
+                                            queueDragHelper.updateDragFrame(dy, queueItem)
+                                        })
+                                    } else {
+                                        if (queueList && queueList.dragActive && queueList.dragFromIndex === index) {
+                                            queueDragHelper.finish(true)
+                                        }
+                                    }
+                                }
+                            }
+                            // Poll scene delta: translationChanged is unreliable when translation cancels to ~0.
+                            Timer {
+                                id: queueDragScenePoll
+                                interval: 16
+                                repeat: true
+                                running: queueReorderDrag.active && queueList.dragActive && queueList.dragFromIndex === index
+                                onTriggered: {
+                                    const dy = queueReorderDrag.centroid.scenePosition.y
+                                               - queueReorderDrag.centroid.scenePressPosition.y
+                                    queueDragHelper.updateDragFrame(dy, queueItem)
+                                }
+                            }
+                            HoverHandler { cursorShape: queueReorderDrag.active ? Qt.ClosedHandCursor : Qt.OpenHandCursor }
+                        }
+                        Text {
+                            text: (modelData && modelData.toString) ? modelData.toString().split("/").pop() : "" + modelData
+                            color: audioControls ? audioControls.iconColor : "#000000"
+                            font.pixelSize: 12
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+
+                        // Reorder buttons
+
+                        Rectangle {
+                            Layout.preferredHeight: 28
+                            Layout.preferredWidth: 30
+                            radius: 10
+                            color: Qt.rgba(0, 0, 0, 0.06)
+                            border.color: Qt.rgba(255, 255, 255, 0.18)
+                            border.width: 1
+                            opacity: index > 0 ? 1.0 : 0.35
+                            Image {
+                                id: moveUpIcon
+                                anchors.centerIn: parent
+                                width: 14
+                                height: 14
+                                source: "qrc:/qlementine/icons/16/navigation/chevron-down.svg"
+                                sourceSize: Qt.size(14, 14)
+                                rotation: 180
+                                visible: false
+                            }
+                            ColorOverlay {
+                                anchors.fill: moveUpIcon
+                                source: moveUpIcon
+                                color: audioControls ? audioControls.iconColor : "#000"
+                                opacity: 0.9
+                            }
+                            TapHandler {
+                                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                acceptedButtons: Qt.LeftButton
+                                onTapped: { if (index > 0 && queueItem._winRef) queueItem._winRef.queueMoveUp(index) }
+                            }
+                            HoverHandler { cursorShape: Qt.PointingHandCursor }
+                        }
+                        Rectangle {
+                            Layout.preferredHeight: 28
+                            Layout.preferredWidth: 30
+                            radius: 10
+                            color: Qt.rgba(0, 0, 0, 0.06)
+                            border.color: Qt.rgba(255, 255, 255, 0.18)
+                            border.width: 1
+                            opacity: (queueItem._winRef && queueItem._winRef.playbackQueue && index < queueItem._winRef.playbackQueue.length - 1) ? 1.0 : 0.35
+                            Image {
+                                id: moveDownIcon
+                                anchors.centerIn: parent
+                                width: 14
+                                height: 14
+                                source: "qrc:/qlementine/icons/16/navigation/chevron-down.svg"
+                                sourceSize: Qt.size(14, 14)
+                                visible: false
+                            }
+                            ColorOverlay {
+                                anchors.fill: moveDownIcon
+                                source: moveDownIcon
+                                color: audioControls ? audioControls.iconColor : "#000"
+                                opacity: 0.9
+                            }
+                            TapHandler {
+                                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                acceptedButtons: Qt.LeftButton
+                                onTapped: {
+                                    if (!queueItem._winRef || !queueItem._winRef.playbackQueue) return
+                                    if (index < queueItem._winRef.playbackQueue.length - 1) queueItem._winRef.queueMoveDown(index)
+                                }
+                            }
+                            HoverHandler { cursorShape: Qt.PointingHandCursor }
+                        }
+                        Rectangle {
+                            Layout.preferredHeight: 28
+                            Layout.preferredWidth: 72
+                            radius: 10
+                            color: Qt.rgba(0, 0, 0, 0.06)
+                            border.color: Qt.rgba(255, 255, 255, 0.18)
+                            border.width: 1
+                            Text { anchors.centerIn: parent; text: "Remove"; color: audioControls ? audioControls.iconColor : "#000"; font.pixelSize: 11; font.weight: Font.Medium }
+                            HoverHandler { cursorShape: Qt.PointingHandCursor }
+                            TapHandler {
+                                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                acceptedButtons: Qt.LeftButton
+                                onTapped: {
+                                    if (!queueItem._winRef) return
+                                    queueItem._winRef.removeFromQueue(index)
+                                }
+                            }
+                        }
+                        Rectangle {
+                            Layout.preferredHeight: 28
+                            Layout.preferredWidth: 56
+                            radius: 10
+                            color: Qt.rgba(0, 0, 0, 0.06)
+                            border.color: Qt.rgba(255, 255, 255, 0.18)
+                            border.width: 1
+                            Text { anchors.centerIn: parent; text: "Play"; color: audioControls ? audioControls.iconColor : "#000"; font.pixelSize: 11; font.weight: Font.Medium }
+                            HoverHandler { cursorShape: Qt.PointingHandCursor }
+                            TapHandler {
+                                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                acceptedButtons: Qt.LeftButton
+                                onTapped: {
+                                    if (!queueItem._winRef) return
+                                    const url = modelData
+                                    queueItem._winRef.removeFromQueue(index)
+                                    queueItem._winRef.enqueueNextInQueue(url)
+                                    queueItem._winRef.playNextInQueue()
+                                    if (queueItem._popupRef) queueItem._popupRef.close()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Drag state + coordinate mapping for queue reorder. Do NOT stack a fullscreen MouseArea
+    // above the list: it would steal move events from the handle that owns the press grab.
+    Item {
+        id: queueDragHelper
+        parent: queuePopup.contentItem
+        anchors.fill: parent
+        visible: false
+
+        property bool active: false
+        property int fromIndex: -1
+        property real dy: 0
+        property var winRef: null
+
+        property bool ghostVisible: false
+        property real ghostX: 0
+        property real ghostY: 0
+        property real ghostW: 0
+        property string ghostTitle: ""
+        property url ghostUrl: ""
+        property int ghostIndex: -1
+
+        function startDrag(idx, win, modelData) {
+            if (audioPlayer.debugQueueDrag)
+                console.log("[QueueDrag] startDrag called", "idx", idx, "count", (queueList ? queueList.count : -1), "win?", !!win)
+            if (!queueList || queueList.count <= 1 || !win) {
+                if (audioPlayer.debugQueueDrag)
+                    console.log("[QueueDrag] startDrag aborted")
+                return
+            }
+            active = true
+            fromIndex = idx
+            winRef = win
+            dy = 0
+            ghostIndex = idx
+            ghostW = queueList.width
+            if (modelData !== undefined && modelData !== null) {
+                ghostUrl = modelData
+                ghostTitle = (modelData && modelData.toString) ? modelData.toString().split("/").pop() : ("" + modelData)
+            } else {
+                ghostUrl = ""
+                ghostTitle = ""
+            }
+            ghostVisible = true
+            queueList.skipShiftAnim = false
+            queueList.dragActive = true
+            queueList.dragFromIndex = idx
+            queueList.dragHoverIndex = idx
+            queueList.dragOffsetY = 0
+            queueList.interactive = false
+            if (audioPlayer.debugQueueDrag)
+                console.log("[QueueDrag] startDrag ok")
+        }
+
+        function updateHoverDy(dyPixels) {
+            if (!active || !queueList)
+                return
+            dy = dyPixels
+            queueList.dragOffsetY = dyPixels
+            const rowH = 48
+            let target = fromIndex + Math.round(dyPixels / rowH)
+            if (target < 0) target = 0
+            if (target > queueList.count - 1) target = queueList.count - 1
+            queueList.dragHoverIndex = target
+            if (audioPlayer.debugQueueDrag)
+                console.log("[QueueDrag] hover", "from", fromIndex, "to", target, "dy", dyPixels.toFixed(1))
+        }
+
+        function updateDragFrame(dyPixels, delegateItem) {
+            updateHoverDy(dyPixels)
+            if (!ghostVisible || !delegateItem)
+                return
+            const p = delegateItem.mapToItem(queuePopup.contentItem, 0, 0)
+            ghostX = p.x
+            ghostY = p.y + dyPixels
+            ghostW = queueList ? queueList.width : ghostW
+        }
+
+        function finish(commit) {
+            if (!active)
+                return
+            const target = queueList.dragHoverIndex
+            const from = fromIndex
+            const win = winRef
+            if (audioPlayer.debugQueueDrag)
+                console.log("[QueueDrag] finish", "commit", commit, "from", from, "to", target)
+            queueList.skipShiftAnim = true
+            active = false
+            fromIndex = -1
+            winRef = null
+            dy = 0
+            ghostVisible = false
+            ghostIndex = -1
+            ghostTitle = ""
+            ghostUrl = ""
+            queueList.dragActive = false
+            queueList.dragFromIndex = -1
+            queueList.dragHoverIndex = -1
+            queueList.dragOffsetY = 0
+            queueList.interactive = true
+            if (commit && win && from >= 0 && target >= 0 && from !== target)
+                win.moveQueueItem(from, target)
+            Qt.callLater(function() { queueList.skipShiftAnim = false })
+        }
+    }
+
+    // Floating preview: ListView often does not repaint delegate transforms smoothly during drag.
+    Rectangle {
+        id: queueDragGhost
+        parent: queuePopup.contentItem
+        z: 200000
+        visible: queueDragHelper.ghostVisible
+        height: 48
+        width: queueDragHelper.ghostW
+        x: queueDragHelper.ghostX
+        y: queueDragHelper.ghostY
+        radius: 12
+        color: Qt.rgba(0, 0, 0, 0.14)
+        border.color: Qt.rgba(255, 255, 255, 0.22)
+        border.width: 1
+        layer.enabled: true
+        layer.effect: DropShadow {
+            transparentBorder: true
+            horizontalOffset: 0
+            verticalOffset: 3
+            radius: 10
+            samples: 20
+            color: Qt.rgba(0, 0, 0, 0.35)
+        }
+
+        RowLayout {
+            anchors.fill: parent
+            anchors.margins: 10
+            spacing: 8
+
+            Text {
+                text: (queueDragHelper.ghostIndex >= 0 ? (queueDragHelper.ghostIndex + 1) : "") + "."
+                color: Qt.rgba(0, 0, 0, 0.55)
+                font.pixelSize: 12
+            }
+            Rectangle {
+                Layout.preferredWidth: 34
+                Layout.preferredHeight: 34
+                radius: 10
+                color: Qt.rgba(0, 0, 0, 0.06)
+                border.color: Qt.rgba(255, 255, 255, 0.18)
+                border.width: 1
+                clip: true
+                Image {
+                    anchors.fill: parent
+                    anchors.margins: 3
+                    source: audioPlayer.queueThumbFor(queueDragHelper.ghostUrl)
+                    asynchronous: true
+                    fillMode: Image.PreserveAspectFit
+                    visible: source && source !== ""
+                }
+                Text {
+                    anchors.centerIn: parent
+                    text: "♪"
+                    color: audioControls ? audioControls.iconColor : "#000"
+                    opacity: 0.5
+                    visible: !(audioPlayer.queueThumbFor(queueDragHelper.ghostUrl) && audioPlayer.queueThumbFor(queueDragHelper.ghostUrl) !== "")
+                }
+            }
+            Text {
+                Layout.fillWidth: true
+                text: queueDragHelper.ghostTitle
+                color: audioControls ? audioControls.iconColor : "#000000"
+                font.pixelSize: 12
+                elide: Text.ElideRight
             }
         }
     }
@@ -1251,10 +2247,30 @@ Item {
         audioAnalyzer: analyzerInstance
         
         property real baseAmplitude: volume * 0.6
-        property real animatedAmplitude: 0.0
         
-        amplitude: analyzerInstance && analyzerInstance.overallAmplitude ? analyzerInstance.overallAmplitude * 2.0 : animatedAmplitude
+        // Use a sampled amplitude value updated by timer below instead of direct
+        // binding to analyzerInstance.overallAmplitude, which updates at audio-frame
+        // rate and causes exponential binding cascade through AudioVisualizerView's
+        // circle dimensions, AudioControls progress bars, MusicPlayerOverlay, etc.
+        property real _sampledAmplitude: 0.0
         
+        amplitude: _sampledAmplitude
+        
+        // Sample the analyzer's overallAmplitude at 50ms (20 FPS) when active.
+        // When not active, fall back to the smooth varying animation timer.
+        Timer {
+            id: amplitudeSampleTimer
+            interval: 50
+            running: audioVisualizer.active && analyzerInstance && analyzerInstance.active
+            repeat: true
+            onTriggered: {
+                if (!analyzerInstance || !analyzerInstance.active) return
+                const raw = analyzerInstance.overallAmplitude || 0.0
+                audioVisualizer._sampledAmplitude = raw * 2.0
+            }
+        }
+        
+        // Fallback animation timer (when analyzer is not active but visualizer is)
         Timer {
             interval: 100
             running: audioVisualizer.active && (!analyzerInstance || !analyzerInstance.active)
@@ -1265,31 +2281,68 @@ Item {
                 const wave1 = Math.sin(time * 2.0) * 0.3 + 0.7
                 const wave2 = Math.sin(time * 3.5) * 0.2 + 0.8
                 const wave3 = Math.sin(time * 1.3) * 0.1 + 0.9
-                audioVisualizer.animatedAmplitude = audioVisualizer.baseAmplitude * wave1 * wave2 * wave3
-            }
-        }
-        
-        Behavior on amplitude {
-            NumberAnimation {
-                duration: 300
-                easing.type: Easing.OutCubic
+                audioVisualizer._sampledAmplitude = audioVisualizer.baseAmplitude * wave1 * wave2 * wave3
             }
         }
     }
     
     // Audio analyzer (C++ backend)
     property alias analyzer: analyzerInstance
+    // Expose lyric lines + current line for the music overlay window.
+    readonly property var lyricLines: {
+        const t = translatedLyricLines
+        if (t && t.length > 0)
+            return t
+        if (lyricsClient && lyricsClient.lyricLines)
+            return lyricsClient.lyricLines
+        return []
+    }
+    readonly property bool hasLyrics: lyricLines && lyricLines.length > 0
+
+    function _lyricText(lineObj) {
+        if (lineObj === undefined || lineObj === null)
+            return ""
+        if (typeof lineObj === "string")
+            return lineObj
+        if (typeof lineObj === "object") {
+            if (lineObj.text !== undefined && lineObj.text !== null)
+                return String(lineObj.text)
+            if (lineObj.lyric !== undefined && lineObj.lyric !== null)
+                return String(lineObj.lyric)
+            if (lineObj.line !== undefined && lineObj.line !== null)
+                return String(lineObj.line)
+        }
+        return String(lineObj)
+    }
+    readonly property string currentLyricLine: {
+        const lines = lyricLines
+        if (!lines || lines.length === 0)
+            return ""
+        let idx = currentLyricIndex
+        if (idx < 0 || idx >= lines.length)
+            idx = 0
+        return _lyricText(lines[idx])
+    }
+    readonly property string nextLyricLine: {
+        const lines = lyricLines
+        if (!lines || lines.length === 0)
+            return ""
+        let idx = currentLyricIndex
+        if (idx < 0 || idx >= lines.length)
+            idx = 0
+        const nextIdx = idx + 1
+        if (nextIdx < 0 || nextIdx >= lines.length)
+            return ""
+        return _lyricText(lines[nextIdx])
+    }
     AudioVisualizer {
         id: analyzerInstance
         Component.onCompleted: {
-            // Set the appropriate player based on betaAudioProcessingEnabled
-            if (betaAudioProcessingEnabled && customPlayer) {
-                // For CustomAudioPlayer, feed samples directly to avoid WASAPI loopback capturing all system audio
+            // useBetaDecoderPath: CustomAudioPlayer feeds the analyzer (local + https when beta audio is on).
+            if (useBetaDecoderPath) {
                 customPlayer.audioVisualizer = analyzerInstance
-                // CustomAudioPlayer is not a QMediaPlayer, but AudioVisualizer accepts QObject for compatibility
                 analyzerInstance.setMediaPlayer(customPlayer)
             } else {
-                // For standard player, use WASAPI loopback
                 analyzerInstance.setMediaPlayer(player)
             }
         }
@@ -1299,7 +2352,7 @@ Item {
     AudioEqualizer {
         id: equalizer
         // Connect to CustomAudioPlayer when beta processing is enabled
-        customAudioPlayer: (betaAudioProcessingEnabled && customPlayer) ? customPlayer : null
+        customAudioPlayer: (useBetaDecoderPath) ? customPlayer : null
         
         Component.onCompleted: {
             // Note: applyToAudioOutput is not needed for the simplified volume-based approach
@@ -1318,10 +2371,11 @@ Item {
         }
     }
     
-    // Connections for standard player
+    // Standard Qt MediaPlayer (local files and network streams). When beta audio is on, CustomAudioPlayer
+    // is only used for local files; YouTube still uses MediaPlayer — we must still start/stop the analyzer.
     Connections {
         target: player
-        enabled: !betaAudioProcessingEnabled
+        enabled: !useBetaDecoderPath
         function onPlaybackStateChanged() {
             if (currentPlaybackState === MediaPlayer.PlayingState && showVisualizer) {
                 analyzerInstance.start()
@@ -1333,7 +2387,7 @@ Item {
     
     // Connections for CustomAudioPlayer when beta is enabled
     Connections {
-        target: (betaAudioProcessingEnabled && customPlayer) ? customPlayer : null
+        target: (useBetaDecoderPath) ? customPlayer : null
         function onPlaybackStateChanged() {
             if (currentPlaybackState === MediaPlayer.PlayingState && showVisualizer) {
                 analyzerInstance.start()
@@ -1348,7 +2402,7 @@ Item {
         function onSourceChanged() {
             if (source !== "") {
                 // Set the appropriate player based on betaAudioProcessingEnabled
-                if (betaAudioProcessingEnabled && customPlayer) {
+                if (useBetaDecoderPath) {
                     analyzerInstance.setMediaPlayer(customPlayer)
                 } else {
                     analyzerInstance.setMediaPlayer(player)
@@ -1386,6 +2440,7 @@ Item {
             color: Qt.darker(accentColor, 1.3)
             border.color: Qt.darker(accentColor, 1.5)
             border.width: 2
+            clip: true
             
             // Rounded mask for the image
             Rectangle {
@@ -1407,10 +2462,89 @@ Item {
                 smooth: true
                 cache: false
                 source: coverArt !== "" ? coverArt : ""
-                visible: coverArt !== "" && (status === Image.Ready || status === Image.Loading)
+                visible: !(musicVideoEnabled && musicVideoPlayer.source !== "")
+                         && coverArt !== "" && (status === Image.Ready || status === Image.Loading)
                 layer.enabled: coverArt !== "" && status === Image.Ready
                 layer.effect: OpacityMask {
                     maskSource: imageMask
+                }
+            }
+
+            VideoOutput {
+                id: musicVideoOutput
+                anchors.fill: parent
+                anchors.margins: 2
+                visible: musicVideoEnabled && musicVideoPlayer.source !== ""
+                fillMode: VideoOutput.PreserveAspectCrop
+            }
+
+            Rectangle {
+                id: musicVideoToggle
+                width: 34
+                height: 34
+                radius: 10
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.topMargin: 10
+                anchors.rightMargin: 10
+                color: Qt.rgba(0, 0, 0, 0.45)
+                border.width: 1
+                border.color: Qt.rgba(255, 255, 255, 0.18)
+                visible: musicVideoUiEnabled && musicVideoSource && musicVideoSource !== ""
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "🎬"
+                    font.pixelSize: 16
+                    opacity: musicVideoEnabled ? 1.0 : 0.55
+                    color: "white"
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: {
+                        musicVideoEnabled = !musicVideoEnabled
+                        if (!musicVideoEnabled && musicVideoPlayer) {
+                            musicVideoPlayer.stop()
+                        } else if (musicVideoEnabled && musicVideoPlayer && musicVideoPlayer.source !== "") {
+                            musicVideoPlayer.position = audioPlayer.currentPosition
+                            if (audioPlayer.playbackState === MediaPlayer.PlayingState)
+                                musicVideoPlayer.play()
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                id: musicVideoOverlayBtn
+                width: 34
+                height: 34
+                radius: 10
+                anchors.top: parent.top
+                anchors.right: musicVideoToggle.left
+                anchors.topMargin: 10
+                anchors.rightMargin: 10
+                color: Qt.rgba(0, 0, 0, 0.45)
+                border.width: 1
+                border.color: Qt.rgba(255, 255, 255, 0.18)
+                visible: musicVideoUiEnabled && musicVideoSource && musicVideoSource !== ""
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "▣"
+                    font.pixelSize: 16
+                    color: "white"
+                    opacity: 0.9
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: {
+                        const w = audioPlayer.appWindowRef
+                        if (w) {
+                            w.musicVideoOverlayVisible = !w.musicVideoOverlayVisible
+                        }
+                    }
                 }
             }
             
@@ -1420,7 +2554,8 @@ Item {
                 anchors.margins: 2
                 radius: parent.radius - 2
                 color: Qt.darker(accentColor, 1.2)
-                visible: coverArt === "" || coverArtImage.status !== Image.Ready
+                visible: !(musicVideoEnabled && musicVideoPlayer.source !== "")
+                         && (coverArt === "" || coverArtImage.status !== Image.Ready)
             }
             
             // Song icon when no cover art
@@ -1447,7 +2582,8 @@ Item {
                 Layout.fillWidth: true
                 // CRITICAL: Use a property that can be explicitly set, but also reacts to metadata changes
                 // When the UI is hidden and becomes visible, we need to ensure the text updates
-                property string _titleText: getMetaString(MediaMetaData.Title) || getMetaString("Title") || "Unknown Title"
+                property string _titleText: audioPlayer.streamOverrideTitleResolved()
+                    || getMetaString(MediaMetaData.Title) || getMetaString("Title") || "Unknown Title"
                 text: _titleText
                 color: foregroundColor
                 font.pixelSize: Math.max(20, Math.min(48, mainContent.width * 0.05))
@@ -1478,7 +2614,8 @@ Item {
                 id: artistText
                 Layout.fillWidth: true
                 // CRITICAL: Use a property that can be explicitly set, but also reacts to metadata changes
-                property string _artistText: getMetaString(MediaMetaData.ContributingArtist) || getMetaString("ContributingArtist") || getMetaString("Artist") || "Unknown Artist"
+                property string _artistText: audioPlayer.streamOverrideArtistResolved()
+                    || getMetaString(MediaMetaData.ContributingArtist) || getMetaString("ContributingArtist") || getMetaString("Artist") || "Unknown Artist"
                 text: _artistText
                 color: Qt.lighter(foregroundColor, 1.2)
                 font.pixelSize: Math.max(14, Math.min(28, mainContent.width * 0.03))
@@ -1505,10 +2642,48 @@ Item {
         }
     }
     
+    function streamOverrideTitleResolved() {
+        const w = appWindowRef
+        if (w && _effectiveNetworkStream() && w.streamOverrideTitle && w.streamOverrideTitle !== "")
+            return w.streamOverrideTitle
+        return ""
+    }
+    function streamOverrideArtistResolved() {
+        const w = appWindowRef
+        if (w && _effectiveNetworkStream() && w.streamOverrideArtist && w.streamOverrideArtist !== "")
+            return w.streamOverrideArtist
+        return ""
+    }
+
     // Helper function to get metadata string
     function getMetaString(key) {
+        // First check WebRTC metadata properties (set via onFullStateReceived)
+        if (key === MediaMetaData.Title || key === "Title") {
+            if (webRTCTitle !== "")
+                return webRTCTitle
+        }
+        if (key === MediaMetaData.ContributingArtist || key === "ContributingArtist" || key === "Artist") {
+            if (webRTCArtist !== "")
+                return webRTCArtist
+        }
+        if (key === MediaMetaData.AlbumTitle || key === "AlbumTitle" || key === "Album") {
+            if (webRTCAlbum !== "")
+                return webRTCAlbum
+        }
+        
+        // Then check stream override
+        if (key === MediaMetaData.Title || key === "Title") {
+            const st = streamOverrideTitleResolved()
+            if (st)
+                return st
+        }
+        if (key === MediaMetaData.ContributingArtist || key === "ContributingArtist" || key === "Artist") {
+            const sa = streamOverrideArtistResolved()
+            if (sa)
+                return sa
+        }
         // Use customPlayer metadata if available, otherwise fall back to player
-        const meta = (betaAudioProcessingEnabled && customPlayer && customPlayer.metaData) ? customPlayer.metaData : (player.metaData ? player.metaData : null)
+        const meta = (useBetaDecoderPath && customPlayer.metaData) ? customPlayer.metaData : (player.metaData ? player.metaData : null)
         if (!meta) return null
         
         try {
@@ -1532,8 +2707,8 @@ Item {
     function refreshMetadataDisplay(options) {
         options = options || {}
         const forceUnknown = options.forceUnknown === true
-        let title = forceUnknown ? "" : (getMetaString(MediaMetaData.Title) || getMetaString("Title") || "")
-        let artist = forceUnknown ? "" : (getMetaString(MediaMetaData.ContributingArtist) || getMetaString("ContributingArtist") || getMetaString("Artist") || "")
+        let title = forceUnknown ? "" : (streamOverrideTitleResolved() || getMetaString(MediaMetaData.Title) || getMetaString("Title") || "")
+        let artist = forceUnknown ? "" : (streamOverrideArtistResolved() || getMetaString(MediaMetaData.ContributingArtist) || getMetaString("ContributingArtist") || getMetaString("Artist") || "")
         
         const hasTitle = !!title
         const hasArtist = !!artist
@@ -1870,12 +3045,12 @@ Item {
     // This prevents Discord RPC and other features from using incomplete metadata
     property bool metadataInitialized: false
     // Live position from player (actual playback position)
-    property int _livePosition: (betaAudioProcessingEnabled && customPlayer) ? customPlayer.position : player.position
+    property int _livePosition: (useBetaDecoderPath) ? customPlayer.position : player.position
     // Display position: show preview while seeking, otherwise show live position
     property int position: _isSeeking && _pendingSeekPos >= 0 ? _pendingSeekPos : _livePosition
-    property int playbackState: (betaAudioProcessingEnabled && customPlayer) ? customPlayer.playbackState : player.playbackState
-    property var metaData: (betaAudioProcessingEnabled && customPlayer) ? customPlayer.metaData : player.metaData
-    property bool seekable: (betaAudioProcessingEnabled && customPlayer) ? customPlayer.seekable : player.seekable
+    property int playbackState: (useBetaDecoderPath) ? customPlayer.playbackState : player.playbackState
+    property var metaData: (useBetaDecoderPath) ? customPlayer.metaData : player.metaData
+    property bool seekable: (useBetaDecoderPath) ? customPlayer.seekable : player.seekable
     
     signal coverArtAvailable(url coverArtUrl)
     
@@ -1901,33 +3076,129 @@ Item {
         }
     }
     
+    /** Network streams: plain play() keeps position on resume (reopening source reset to 0:00). */
+    function playQtMediaPlayer() {
+        player.play()
+        Qt.callLater(function() { syncVolumeToQtOutput() })
+    }
+
     function play() {
+        listenTogetherWantsPlayback = true
         // CRITICAL: Stop the other player first to prevent dual playback
-        if (betaAudioProcessingEnabled && customPlayer) {
+        if (useBetaDecoderPath) {
             player.stop()  // Stop regular player
             customPlayer.play()
         } else {
             if (customPlayer) {
                 customPlayer.stop()  // Stop custom player
             }
-            player.play()
+            playQtMediaPlayer()
         }
     }
     function pause() {
-        if (betaAudioProcessingEnabled && customPlayer) {
+        listenTogetherWantsPlayback = false
+        if (useBetaDecoderPath) {
             customPlayer.pause()
         } else {
             player.pause()
         }
     }
+    function setOutputVolume(vol) {
+        if (_syncingVolume) return
+        const clamped = Math.max(0.0, Math.min(1.0, vol))
+        _syncingVolume = true
+        audioPlayer.volume = clamped
+        if (useBetaDecoderPath) {
+            customPlayer.volume = clamped
+        } else if (player && player.audioOutput) {
+            player.audioOutput.volume = clamped
+        }
+        if (clamped > 0) {
+            audioPlayer.savedVolume = clamped
+        }
+        _syncingVolume = false
+    }
+    function toggleMute() {
+        const currentlyMuted = (useBetaDecoderPath)
+            ? (customPlayer.volume === 0)
+            : (player && player.audioOutput ? (player.audioOutput.volume === 0) : (audioPlayer.volume === 0))
+
+        if (!currentlyMuted) {
+            const currentVol = audioPlayer.volume > 0 ? audioPlayer.volume
+                             : ((useBetaDecoderPath) ? customPlayer.volume
+                                : (player && player.audioOutput ? player.audioOutput.volume : 0))
+            if (currentVol > 0)
+                audioPlayer.savedVolume = currentVol
+            setOutputVolume(0.0)
+            return
+        }
+
+        const restoreVol = audioPlayer.savedVolume > 0 ? audioPlayer.savedVolume : 0.5
+        setOutputVolume(restoreVol)
+    }
+    function setLoopEnabled(enabled) {
+        const on = !!enabled
+        if (useBetaDecoderPath) {
+            customPlayer.loop = on
+        } else if (player) {
+            player.loops = on ? MediaPlayer.Infinite : MediaPlayer.Once
+        }
+    }
+    function seekToPosition(pos) {
+        if (!seekable || duration <= 0) return
+        const clamped = Math.max(0, Math.min(pos, duration > 0 ? duration - 1 : pos))
+        const wasPlaying = currentPlaybackState === MediaPlayer.PlayingState
+        
+        // Broadcast seek to WebRTC peers if connected
+        if (webRTCManager && webRTCManager.isConnected && !webRTCManager._syncing) {
+            webRTCManager.broadcastSeek(clamped)
+        }
+        if (useBetaDecoderPath) {
+            customPlayer.seek(clamped)
+        } else {
+            player.position = clamped
+            Qt.callLater(function() {
+                if (!wasPlaying && player.playbackState === MediaPlayer.PlayingState) {
+                    player.pause()
+                }
+            })
+        }
+    }
     function stop() {
-        if (betaAudioProcessingEnabled && customPlayer) {
+        listenTogetherWantsPlayback = false
+        if (useBetaDecoderPath) {
             customPlayer.stop()
         }
         player.stop()
     }
     
     onSourceChanged: {
+        const ctx = (source && source.toString) ? source.toString() : String(source || "")
+        const isWebRtcPeerStream = webRTCManager && webRTCManager.isConnected && !webRTCManager.isHost
+                && ctx.indexOf("s3rpent_stream_") >= 0
+        const hostStreamDuration = isWebRtcPeerStream && webRTCManager.streamDuration > 0
+                ? webRTCManager.streamDuration : 0
+        if (ctx.indexOf("http://") === 0 || ctx.indexOf("https://") === 0)
+            _lastHttpAudioContextUrl = ctx
+        
+        // Broadcast track change to WebRTC peers if connected (host only)
+        if (webRTCManager && webRTCManager.isConnected && webRTCManager.isHost
+                && source !== "" && !webRTCManager._syncing) {
+            const hostWantsSyncPlay = listenTogetherWantsPlayback
+                    || currentPlaybackState !== MediaPlayer.PausedState
+            webRTCManager.broadcastTrackChange(source.toString(), hostWantsSyncPlay)
+        }
+        else if (ctx !== "")
+            _lastHttpAudioContextUrl = ""
+        _lastNetworkAudioErrorLogMs = 0
+        
+        // Delay metadata sync until metadata is actually available
+        Qt.callLater(function() {
+            if (webRTCManager && webRTCManager.isConnected && source !== "") {
+                webRTCManager.syncMetadataToWebRTC()
+            }
+        })
+
         // Reset Windows Media Session source tracking when source changes
         lastWindowsMediaSessionSource = ""
         
@@ -1943,31 +3214,31 @@ Item {
         // Reset instant duration and last emitted duration when source changes
         instantDuration = 0
         _lastEmittedDuration = 0
+        if (hostStreamDuration > 0) {
+            instantDuration = hostStreamDuration
+            _lastEmittedDuration = hostStreamDuration
+        }
         // Reset metadata initialization flag when source changes
         metadataInitialized = false
         
-        // Get duration instantly from C++ helper if available (same as metadata menu uses)
-        if (source !== "" && typeof ColorUtils !== "undefined" && typeof ColorUtils.getAudioDuration === "function") {
+        // Non-beta: get duration via ColorUtils (blocking QEventLoop). Beta uses CustomAudioPlayer + Connections above.
+        if (!betaAudioProcessingEnabled && source !== "" && !isWebRtcPeerStream
+                && typeof ColorUtils !== "undefined" && typeof ColorUtils.getAudioDuration === "function") {
             Qt.callLater(function() {
                 try {
                     const duration = ColorUtils.getAudioDuration(source)
                     if (duration > 0) {
                         instantDuration = duration
                         _lastEmittedDuration = duration
-                        // Emit durationAvailable when instant duration is set (same as metadata menu uses)
                         durationAvailable()
-                        // Check if metadata is now fully initialized and fetch lyrics (consolidated into single delayed call)
                         Qt.callLater(function() {
-                            // Guard: Check if component is still valid
                             if (source !== "") {
                                 checkMetadataInitialized()
-                                // Fetch lyrics when duration is available (consolidated into same call)
-                            fetchLyrics()
+                                fetchLyrics()
                             }
-                        }, 50)  // Small delay to ensure title metadata is also available
+                        }, 50)
                     }
                 } catch (e) {
-                    // Ignore errors
                 }
             })
         }
@@ -1990,6 +3261,14 @@ Item {
         }
         player.stop()
         
+        // Explicitly clear underlying player sources when audioPlayer.source is empty
+        // to prevent stale media from playing if a remote play arrives before the new stream
+        if (source === "") {
+            if (customPlayer)
+                customPlayer.source = ""
+            player.source = ""
+        }
+
         // Small delay to ensure audio devices are fully released
         Qt.callLater(function() {
             if (source !== "") {
@@ -1999,7 +3278,9 @@ Item {
                 // Reset activation flag when source changes
                 autoplayStateCheckTimer.hasActivatedSession = false
                 
-                if (betaAudioProcessingEnabled && customPlayer) {
+                if (useBetaDecoderPath) {
+                    if (player.source.toString() !== "")
+                        player.source = ""
                     // Use custom player for real EQ processing
                     // CRITICAL: Only set source if it's different to prevent duplicate loading
                     if (customPlayer.source !== source) {
@@ -2010,8 +3291,8 @@ Item {
                     }
                     customPlayer.volume = audioPlayer.volume
 
-                    // Only play if not already playing
-                    if (customPlayer.playbackState !== CustomAudioPlayer.PlayingState) {
+                    // Only play if not already playing and not in a WebRTC sync (WebRTC handlers control play/pause)
+                    if (webRTCManager && !webRTCManager._syncing && customPlayer.playbackState !== CustomAudioPlayer.PlayingState) {
                         if (debugMode) {
                             console.log("[AudioPlayer] onSourceChanged - calling customPlayer.play()")
                         }
@@ -2025,20 +3306,26 @@ Item {
                         }
                         // Note: Don't restart timer here - let it complete its 3-check cycle naturally
                         // The timer will activate Windows Media Session after completing all checks
+                    } else if (webRTCManager && webRTCManager._syncing && debugMode) {
+                        console.log("[AudioPlayer] onSourceChanged - WebRTC sync active, skipping autoplay")
                     }
                 } else {
-                    // Use standard player
+                    if (customPlayer)
+                        customPlayer.source = ""
+                    // Use standard player (local file with beta off, or http(s) stream)
                     if (player.source !== source) {
                         if (debugMode) {
                             console.log("[AudioPlayer] onSourceChanged - setting player.source")
                         }
                         player.source = source
                     }
-                    if (player.playbackState !== MediaPlayer.PlayingState) {
+                    syncVolumeToQtOutput()
+                    // Only play if not already playing and not in a WebRTC sync (WebRTC handlers control play/pause)
+                    if (webRTCManager && !webRTCManager._syncing && player.playbackState !== MediaPlayer.PlayingState) {
                         if (debugMode) {
-                            console.log("[AudioPlayer] onSourceChanged - calling player.play()")
+                            console.log("[AudioPlayer] onSourceChanged - calling playQtMediaPlayer()")
                         }
-                        player.play()
+                        playQtMediaPlayer()
                         // Autoplay doesn't always fire onPlaybackStateChanged signal
                         // Force immediate state check and update
                         autoplayStateCheckTimer.interval = 100  // Check quickly first
@@ -2048,6 +3335,8 @@ Item {
                         }
                         // Note: Don't restart timer here - let it complete its 3-check cycle naturally
                         // The timer will activate Windows Media Session after completing all checks
+                    } else if (webRTCManager && webRTCManager._syncing && debugMode) {
+                        console.log("[AudioPlayer] onSourceChanged - WebRTC sync active, skipping autoplay")
                     }
                 }
             }

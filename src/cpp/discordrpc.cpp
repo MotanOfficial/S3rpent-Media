@@ -1,5 +1,4 @@
 #include "discordrpc.h"
-#include <QDebug>
 #include <QStandardPaths>
 #include <QDir>
 #include <QJsonObject>
@@ -7,6 +6,7 @@
 #include <QDateTime>
 #include <QCoreApplication>
 #include <QSettings>
+#include <QMetaObject>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -29,12 +29,17 @@ DiscordRPC::DiscordRPC(QObject *parent)
 #endif
     , m_hasLastPresence(false)
     , m_minimalClientId("1397125867238588416")  // Application ID for Listening activity with cover art
+    , m_ioThread(nullptr)
+    , m_ioObject(nullptr)
+    , m_lastPresenceSendMs(0)
 {
     // Load settings
     QSettings settings;
     settings.beginGroup("discord");
     m_enabled = settings.value("enabled", true).toBool();  // Default to enabled
     settings.endGroup();
+
+    ensureIoThread();
     
     m_reconnectTimer = new QTimer(this);
     m_reconnectTimer->setInterval(5000); // Try to reconnect every 5 seconds
@@ -43,20 +48,22 @@ DiscordRPC::DiscordRPC(QObject *parent)
     
     // Auto-connect if enabled
     if (m_enabled) {
-        qDebug() << "[DiscordRPC] Initialized and enabled, will connect in 1 second";
         QTimer::singleShot(1000, this, [this]() {
-            qDebug() << "[DiscordRPC] Auto-connect timer triggered";
             connectToDiscord();
             m_reconnectTimer->start();
         });
-    } else {
-        qDebug() << "[DiscordRPC] Initialized with enabled=false";
     }
 }
 
 DiscordRPC::~DiscordRPC()
 {
     disconnectFromDiscord();
+    if (m_ioThread) {
+        m_ioThread->quit();
+        m_ioThread->wait(2000);
+        m_ioThread = nullptr;
+        m_ioObject = nullptr;
+    }
 }
 
 void DiscordRPC::setEnabled(bool enabled)
@@ -64,7 +71,6 @@ void DiscordRPC::setEnabled(bool enabled)
     if (m_enabled == enabled)
         return;
     
-    qDebug() << "[DiscordRPC] Setting enabled to:" << enabled;
     m_enabled = enabled;
     
     // Save to settings
@@ -74,11 +80,9 @@ void DiscordRPC::setEnabled(bool enabled)
     settings.endGroup();
     
     if (enabled) {
-        qDebug() << "[DiscordRPC] Enabled - connecting to Discord...";
         connectToDiscord();
         m_reconnectTimer->start();
     } else {
-        qDebug() << "[DiscordRPC] Disabled - disconnecting from Discord...";
         disconnectFromDiscord();
         m_reconnectTimer->stop();
     }
@@ -94,16 +98,12 @@ void DiscordRPC::updatePresence(const QString &title, const QString &artist,
                                  const QString &coverArtUrl)
 {
     if (!m_enabled) {
-        qDebug() << "[DiscordRPC] updatePresence called but RPC is disabled";
         return;
     }
-    
     if (!m_connected) {
-        qDebug() << "[DiscordRPC] updatePresence called but not connected to Discord";
+        connectToDiscord();
         return;
     }
-    
-    qDebug() << "[DiscordRPC] Updating presence:" << title << "-" << artist << "State:" << playbackState;
 
     // Build presence object
     QJsonObject presence;
@@ -173,11 +173,6 @@ void DiscordRPC::updatePresence(const QString &title, const QString &artist,
             assets["large_text"] = title;
         }
         
-        if (imageUrl.startsWith("file://")) {
-            qDebug() << "[DiscordRPC] Using file:// URL for cover art (experimental):" << imageUrl;
-        } else {
-            qDebug() << "[DiscordRPC] Using HTTP/HTTPS URL for cover art:" << imageUrl;
-        }
     }
     // Always include assets object (even if empty) to match WatchDis behavior
     if (!assets.isEmpty()) {
@@ -194,14 +189,28 @@ void DiscordRPC::updatePresence(const QString &title, const QString &artist,
     command["args"] = args;
     command["nonce"] = QString::number(QDateTime::currentMSecsSinceEpoch());
     
-    // Send the command
-    if (sendCommand(command)) {
-        m_lastPresence = presence;
-        m_hasLastPresence = true;
-        qDebug() << "[DiscordRPC] Presence updated successfully";
-    } else {
-        qDebug() << "[DiscordRPC] Failed to send presence update";
+    // Throttle + dedupe to avoid GUI-thread churn and Discord IPC spam.
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (m_hasLastPresence && presence == m_lastPresence && (nowMs - m_lastPresenceSendMs) < 1000) {
+        return;
     }
+    if ((nowMs - m_lastPresenceSendMs) < 1000 && playbackState == 1) {
+        // While playing, update at most once per second.
+        return;
+    }
+
+    m_lastPresence = presence;
+    m_hasLastPresence = true;
+    m_lastPresenceSendMs = nowMs;
+
+    // Send the command asynchronously (IPC can block on Windows pipes).
+    ensureIoThread();
+    QMetaObject::invokeMethod(m_ioObject, [this, command]() {
+        if (!sendCommand(command)) {
+            // Treat as disconnected; force reconnect later.
+            disconnectFromDiscord();
+        }
+    }, Qt::QueuedConnection);
 }
 
 void DiscordRPC::clearPresence()
@@ -219,178 +228,145 @@ void DiscordRPC::clearPresence()
     command["args"] = args;
     command["nonce"] = QString::number(QDateTime::currentMSecsSinceEpoch());
     
-    sendCommand(command);
+    ensureIoThread();
+    QMetaObject::invokeMethod(m_ioObject, [this, command]() {
+        if (!sendCommand(command)) {
+            disconnectFromDiscord();
+        }
+    }, Qt::QueuedConnection);
     m_hasLastPresence = false;
 }
 
 void DiscordRPC::reconnectTimer()
 {
     if (m_enabled && !m_connected) {
-        qDebug() << "[DiscordRPC] Reconnect timer triggered, attempting to connect...";
         connectToDiscord();
     }
+}
+
+void DiscordRPC::ensureIoThread()
+{
+    if (m_ioThread && m_ioObject) {
+        return;
+    }
+    m_ioThread = new QThread(this);
+    m_ioObject = new QObject();
+    m_ioObject->moveToThread(m_ioThread);
+    connect(m_ioThread, &QThread::finished, m_ioObject, &QObject::deleteLater);
+    m_ioThread->start();
+}
+
+void DiscordRPC::setConnected(bool connected)
+{
+    if (m_connected == connected) {
+        return;
+    }
+    m_connected = connected;
+    emit connectionStatusChanged(connected);
 }
 
 bool DiscordRPC::connectToDiscord()
 {
     if (m_connected) {
-        qDebug() << "[DiscordRPC] Already connected";
         return true;
     }
-    
-    qDebug() << "[DiscordRPC] Attempting to connect to Discord...";
-    QString pipePath = findDiscordPipe();
-    if (pipePath.isEmpty()) {
-        qDebug() << "[DiscordRPC] Failed to find Discord IPC pipe";
-        return false;
-    }
-    
-    qDebug() << "[DiscordRPC] Found Discord pipe:" << pipePath;
-    
+
+    ensureIoThread();
+    QMetaObject::invokeMethod(m_ioObject, [this]() {
+        const QString pipePath = findDiscordPipe();
+        if (pipePath.isEmpty()) {
+            return;
+        }
+
 #ifdef Q_OS_WIN
-    // Convert QString to wide string for Windows API
-    std::wstring pipePathW = pipePath.toStdWString();
-    m_pipeHandle = CreateFileW(
-        pipePathW.c_str(),
-        GENERIC_READ | GENERIC_WRITE,
-        0,
-        nullptr,
-        OPEN_EXISTING,
-        0,
-        nullptr
-    );
-    
-    if (m_pipeHandle == INVALID_HANDLE_VALUE) {
-        return false;
-    }
-    
-    // Perform handshake
-    if (sendHandshake()) {
-        // Read handshake response to confirm connection
-        QByteArray response = readFromPipe();
-        if (!response.isEmpty()) {
-            QJsonDocument responseDoc = QJsonDocument::fromJson(response);
-            QJsonObject responseObj = responseDoc.object();
-            int code = responseObj.value("code").toInt();
-            if (code == 0) {
-                m_connected = true;
-                qDebug() << "[DiscordRPC] Successfully connected to Discord!";
-                emit connectionStatusChanged(true);
-                return true;
+        std::wstring pipePathW = pipePath.toStdWString();
+        m_pipeHandle = CreateFileW(pipePathW.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (m_pipeHandle == INVALID_HANDLE_VALUE) {
+            return;
+        }
+#else
+        struct sockaddr_un addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        strncpy(addr.sun_path, pipePath.toLocal8Bit().constData(), sizeof(addr.sun_path) - 1);
+
+        m_socketFd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (m_socketFd < 0) {
+            return;
+        }
+        if (connect(m_socketFd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+            close(m_socketFd);
+            m_socketFd = -1;
+            return;
+        }
+#endif
+
+        bool ok = false;
+        if (sendHandshake()) {
+            const QByteArray response = readFromPipe();
+            if (!response.isEmpty()) {
+                const QJsonDocument responseDoc = QJsonDocument::fromJson(response);
+                const QJsonObject responseObj = responseDoc.object();
+                const int code = responseObj.value("code").toInt();
+                ok = (code == 0);
             } else {
-                qDebug() << "[DiscordRPC] Handshake rejected with code:" << code;
-                if (code == 1003) {
-                    qDebug() << "[DiscordRPC] Discord requires client_id in handshake - Rich Presence cannot work without an application ID";
-                }
+                ok = true;
+            }
+        }
+
+        if (!ok) {
+#ifdef Q_OS_WIN
+            if (m_pipeHandle != INVALID_HANDLE_VALUE) {
                 CloseHandle(m_pipeHandle);
                 m_pipeHandle = INVALID_HANDLE_VALUE;
-                return false;
             }
-        } else {
-            // If we can't read response, assume connection is OK (some Discord versions don't send response)
-            m_connected = true;
-            qDebug() << "[DiscordRPC] Successfully connected to Discord (no response received)";
-            emit connectionStatusChanged(true);
-            return true;
-        }
-    } else {
-        qDebug() << "[DiscordRPC] Handshake failed";
-        CloseHandle(m_pipeHandle);
-        m_pipeHandle = INVALID_HANDLE_VALUE;
-        return false;
-    }
 #else
-    // Unix socket implementation
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, pipePath.toLocal8Bit().constData(), sizeof(addr.sun_path) - 1);
-    
-    m_socketFd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (m_socketFd < 0) {
-        return false;
-    }
-    
-    if (connect(m_socketFd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(m_socketFd);
-        m_socketFd = -1;
-        return false;
-    }
-    
-    // Perform handshake
-    if (sendHandshake()) {
-        // Read handshake response to confirm connection
-        QByteArray response = readFromPipe();
-        if (!response.isEmpty()) {
-            QJsonDocument responseDoc = QJsonDocument::fromJson(response);
-            QJsonObject responseObj = responseDoc.object();
-            int code = responseObj.value("code").toInt();
-            if (code == 0) {
-                m_connected = true;
-                qDebug() << "[DiscordRPC] Successfully connected to Discord!";
-                emit connectionStatusChanged(true);
-                return true;
-            } else {
-                qDebug() << "[DiscordRPC] Handshake rejected with code:" << code;
-                if (code == 1003) {
-                    qDebug() << "[DiscordRPC] Discord requires client_id in handshake - Rich Presence cannot work without an application ID";
-                }
+            if (m_socketFd >= 0) {
                 close(m_socketFd);
                 m_socketFd = -1;
-                return false;
             }
-        } else {
-            // If we can't read response, assume connection is OK (some Discord versions don't send response)
-            m_connected = true;
-            qDebug() << "[DiscordRPC] Successfully connected to Discord (no response received)";
-            emit connectionStatusChanged(true);
-            return true;
-        }
-    } else {
-        qDebug() << "[DiscordRPC] Handshake failed";
-        close(m_socketFd);
-        m_socketFd = -1;
-        return false;
-    }
 #endif
+            return;
+        }
+
+        QMetaObject::invokeMethod(this, [this]() {
+            setConnected(true);
+        }, Qt::QueuedConnection);
+    }, Qt::QueuedConnection);
+
+    return false;
 }
 
 void DiscordRPC::disconnectFromDiscord()
 {
-    if (!m_connected) {
+    if (m_connected) {
+        setConnected(false);
+    }
+    if (!m_ioObject) {
         return;
     }
-    
+    QMetaObject::invokeMethod(m_ioObject, [this]() {
 #ifdef Q_OS_WIN
-    if (m_pipeHandle != INVALID_HANDLE_VALUE) {
-        CloseHandle(m_pipeHandle);
-        m_pipeHandle = INVALID_HANDLE_VALUE;
-    }
+        if (m_pipeHandle != INVALID_HANDLE_VALUE) {
+            CloseHandle(m_pipeHandle);
+            m_pipeHandle = INVALID_HANDLE_VALUE;
+        }
 #else
-    if (m_socketFd >= 0) {
-        close(m_socketFd);
-        m_socketFd = -1;
-    }
+        if (m_socketFd >= 0) {
+            close(m_socketFd);
+            m_socketFd = -1;
+        }
 #endif
-    
-    m_connected = false;
-    emit connectionStatusChanged(false);
+    }, Qt::QueuedConnection);
 }
 
 bool DiscordRPC::sendHandshake()
 {
-    qDebug() << "[DiscordRPC] Sending handshake to Discord with minimal client_id...";
     QJsonObject handshake;
     handshake["v"] = 1;
     handshake["client_id"] = m_minimalClientId;  // Built-in application ID - no user configuration needed
     
-    bool result = sendCommand(handshake);
-    if (result) {
-        qDebug() << "[DiscordRPC] Handshake sent successfully";
-    } else {
-        qDebug() << "[DiscordRPC] Handshake send failed";
-    }
-    return result;
+    return sendCommand(handshake);
 }
 
 bool DiscordRPC::sendCommand(const QJsonObject &command)
@@ -419,22 +395,15 @@ bool DiscordRPC::writeToPipe(const QByteArray &data)
 {
 #ifdef Q_OS_WIN
     if (m_pipeHandle == INVALID_HANDLE_VALUE) {
-        qDebug() << "[DiscordRPC] writeToPipe failed: invalid pipe handle";
         return false;
     }
     
     DWORD bytesWritten = 0;
     if (!WriteFile(m_pipeHandle, data.constData(), static_cast<DWORD>(data.size()), &bytesWritten, nullptr)) {
-        DWORD error = GetLastError();
-        qDebug() << "[DiscordRPC] WriteFile failed with error:" << error;
         return false;
     }
     
-    bool success = bytesWritten == static_cast<DWORD>(data.size());
-    if (!success) {
-        qDebug() << "[DiscordRPC] WriteFile incomplete: wrote" << bytesWritten << "of" << data.size() << "bytes";
-    }
-    return success;
+    return bytesWritten == static_cast<DWORD>(data.size());
 #else
     if (m_socketFd < 0) {
         return false;
@@ -509,7 +478,6 @@ QString DiscordRPC::findDiscordPipe()
 {
 #ifdef Q_OS_WIN
     // Try pipes discord-ipc-0 through discord-ipc-9
-    qDebug() << "[DiscordRPC] Searching for Discord IPC pipe...";
     for (int i = 0; i < 10; ++i) {
         QString pipePath = QString("\\\\.\\pipe\\discord-ipc-%1").arg(i);
         std::wstring pipePathW = pipePath.toStdWString();
@@ -526,11 +494,9 @@ QString DiscordRPC::findDiscordPipe()
         
         if (handle != INVALID_HANDLE_VALUE) {
             CloseHandle(handle);
-            qDebug() << "[DiscordRPC] Found Discord pipe at index" << i;
             return pipePath;
         }
     }
-    qDebug() << "[DiscordRPC] No Discord pipe found (Discord may not be running)";
 #else
     // Try Unix sockets in common locations
     QStringList possiblePaths = {

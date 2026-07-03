@@ -13,6 +13,7 @@ Rectangle {
     property color accentColor: "#121216"
     property color foregroundColor: "#f5f5f5"
     property bool dynamicColoringEnabled: true
+    property bool windowsAccentColorEnabled: false
     property bool gradientBackgroundEnabled: true
     property bool backdropBlurEnabled: false
     property bool ambientGradientEnabled: false
@@ -31,9 +32,16 @@ Rectangle {
     property string coverArtSource: "coverartarchive"  // "coverartarchive" or "lastfm"
     property string lastFMApiKey: ""
     property bool debugConsoleEnabled: false
+    property int musicVideoMaxHeight: 0  // 0=auto, otherwise cap height
+    readonly property string appVersion: (Qt.application.version && Qt.application.version !== "")
+        ? Qt.application.version
+        : "0.1"
+    // Declared before ShaderEffectSource — used by live / blur bindings
+    property bool blurActive: false
     
     signal backClicked()
     signal dynamicColoringToggled(bool enabled)
+    signal windowsAccentColorToggled(bool enabled)
     signal gradientBackgroundToggled(bool enabled)
     signal backdropBlurToggled(bool enabled)
     signal ambientGradientToggled(bool enabled)
@@ -54,6 +62,7 @@ Rectangle {
     signal coverArtSourceSelected(string source)
     signal lastFMApiKeyEdited(string apiKey)
     signal debugConsoleToggled(bool enabled)
+    signal musicVideoMaxHeightSelected(int maxHeight)
     
     // Modern popup container
     Layout.fillWidth: true
@@ -71,14 +80,23 @@ Rectangle {
             }
             return (appWindow && appWindow.background) ? appWindow.background : null
         }
-        live: true  // Update live so it captures the current media viewer state
+        // Only sample while blur is on — avoids per-frame GPU capture when overlay is idle
+        live: blurActive
+        // Downsample capture for FastBlur (full-window texture is very expensive)
+        textureSize: {
+            const w = Math.floor(settingsPage.width)
+            const h = Math.floor(settingsPage.height)
+            if (w <= 0 || h <= 0)
+                return Qt.size(0, 0)
+            const maxEdge = 640
+            const scale = Math.min(1.0, maxEdge / Math.max(w, h))
+            return Qt.size(Math.max(1, Math.floor(w * scale)), Math.max(1, Math.floor(h * scale)))
+        }
         hideSource: false  // Don't hide source - we want the original visible behind the blur
         visible: false
         z: -2  // Behind blur and overlay
         
-        // Debug logging
         onSourceItemChanged: {
-            console.log("[SettingsBlur] ShaderEffectSource sourceItem changed:", sourceItem ? "set" : "null", "mediaViewerItem:", mediaViewerItem ? "set" : "null")
             if (sourceItem) {
                 scheduleUpdate()
             }
@@ -88,9 +106,6 @@ Rectangle {
         Component.onCompleted: {
             if (sourceItem) {
                 scheduleUpdate()
-                console.log("[SettingsBlur] ShaderEffectSource initialized, sourceItem:", sourceItem)
-            } else {
-                console.log("[SettingsBlur] ShaderEffectSource initialized, but sourceItem is null. appWindow:", appWindow ? "set" : "null")
             }
         }
     }
@@ -101,7 +116,7 @@ Rectangle {
         anchors.fill: parent
         source: backgroundSource
         radius: blurActive ? 50 : 0  // Increased blur radius even more for better visibility
-        visible: blurActive && backgroundSource.sourceItem !== null
+        visible: blurActive && backgroundSource.sourceItem !== null && currentSection !== "about"
         z: -1  // Behind overlay but above source
         
         // Smooth blur animation
@@ -130,37 +145,27 @@ Rectangle {
         }
     }
     
-    // Property to track if blur should be active - only when settings is actually shown
-    property bool blurActive: false
-    
-    // Debug: log when mediaViewerItem changes
-    onMediaViewerItemChanged: {
-        console.log("[SettingsBlur] mediaViewerItem changed:", mediaViewerItem ? "set" : "null")
-    }
+    onMediaViewerItemChanged: {}
     
     // Animate blur and overlay when settings is shown/hidden
     onShowingSettingsChanged: {
-        console.log("[SettingsBlur] showingSettings changed to:", showingSettings, "mediaViewerItem:", mediaViewerItem ? "set" : "null")
         if (showingSettings) {
             // Settings is opening - capture media viewer for blur (it's now always visible!)
             if (mediaViewerItem) {
                 backgroundSource.sourceItem = mediaViewerItem
                 backgroundSource.scheduleUpdate()
-                console.log("[SettingsBlur] Captured media viewer for blur")
             } else if (appWindow && appWindow.background) {
                 // Fallback to window background
                 backgroundSource.sourceItem = appWindow.background
                 backgroundSource.scheduleUpdate()
-                console.log("[SettingsBlur] Using window background for blur (fallback)")
             }
             
             Qt.callLater(function() {
                 blurActive = true
-                darkOverlay.opacity = 1
+                darkOverlay.opacity = currentSection === "about" ? 0 : 1
             })
         } else {
             // Settings is closing - animate blur out
-            console.log("[SettingsBlur] Settings closing, animating blur out")
             blurActive = false
             darkOverlay.opacity = 0
         }
@@ -170,34 +175,66 @@ Rectangle {
     Component.onCompleted: {
         blurActive = false
         darkOverlay.opacity = 0
-        console.log("[SettingsBlur] Component initialized, blurActive:", blurActive)
     }
     
     // Update blur when appWindow becomes available (if settings is already shown)
     onAppWindowChanged: {
         if (appWindow && appWindow.background && showingSettings) {
             Qt.callLater(function() {
-                console.log("[SettingsBlur] appWindow changed, updating blur")
                 backgroundSource.scheduleUpdate()
                 blurActive = true
             })
         }
     }
     
+    // Full-window About backdrop (edge-to-edge, not confined to the settings card)
+    Item {
+        id: aboutFullscreenBg
+        anchors.fill: parent
+        visible: showingSettings && currentSection === "about"
+        z: 0
+
+        Rectangle {
+            anchors.fill: parent
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: "#f5f5f5" }
+                GradientStop { position: 1.0; color: "#d0d0d0" }
+            }
+        }
+
+        AmbientGradient {
+            anchors.fill: parent
+            enabled: true
+            effectOpacity: 1.0
+            speed: 0.012
+            distortion: 0.18
+            paletteColors: ["#ffffff", "#f0f0f0", "#d8d8d8", "#b8b8b8", "#8a8a8a"]
+        }
+    }
+
+    onCurrentSectionChanged: {
+        if (showingSettings)
+            darkOverlay.opacity = currentSection === "about" ? 0 : 1
+    }
+
     // Main settings container (must be above blur and overlay)
         Rectangle {
         id: settingsContainer
-        anchors.centerIn: parent
-        width: Math.min(900, parent.width - 80)
-        height: Math.min(700, parent.height - 80)
-        radius: 20
         z: 1  // Above blur and overlay
-        color: Qt.rgba(
-            Qt.lighter(accentColor, 1.3).r,
-            Qt.lighter(accentColor, 1.3).g,
-            Qt.lighter(accentColor, 1.3).b,
-            0.95
-        )
+        radius: currentSection === "about" ? 0 : 20
+        color: currentSection === "about"
+               ? "transparent"
+               : Qt.rgba(
+                   Qt.lighter(accentColor, 1.3).r,
+                   Qt.lighter(accentColor, 1.3).g,
+                   Qt.lighter(accentColor, 1.3).b,
+                   0.95
+                 )
+
+        anchors.centerIn: currentSection === "about" ? undefined : parent
+        anchors.fill: currentSection === "about" ? parent : undefined
+        width: currentSection === "about" ? undefined : Math.min(900, parent.width - 80)
+        height: currentSection === "about" ? undefined : Math.min(700, parent.height - 80)
         
         // Entrance animation
         scale: 0.9
@@ -213,8 +250,8 @@ Rectangle {
             opacity = 1.0
         }
         
-        // Subtle shadow
-        layer.enabled: true
+        // Subtle shadow (hidden on About — full-bleed page)
+        layer.enabled: currentSection !== "about"
         layer.effect: DropShadow {
             transparentBorder: true
             horizontalOffset: 0
@@ -232,8 +269,9 @@ Rectangle {
             // Left sidebar
             Rectangle {
                 id: sidebar
-                Layout.preferredWidth: 220
+                Layout.preferredWidth: currentSection === "about" ? 0 : 220
                 Layout.fillHeight: true
+                visible: currentSection !== "about"
                 color: Qt.rgba(0, 0, 0, 0.2)
                 radius: 20
             
@@ -438,8 +476,90 @@ Rectangle {
                     }
                 }
             }
-            
+
                     Item { Layout.fillHeight: true }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        Layout.topMargin: 4
+                        Layout.bottomMargin: 4
+                        color: Qt.rgba(1, 1, 1, 0.14)
+                    }
+
+                    Repeater {
+                        model: [
+                            { id: "about", name: qsTr("About"), icon: "qrc:/qlementine/icons/16/misc/info.svg" }
+                        ]
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 44
+                            radius: 10
+                            color: currentSection === modelData.id
+                                   ? Qt.rgba(foregroundColor.r, foregroundColor.g, foregroundColor.b, 0.15)
+                                   : (aboutNavHover.hovered ? Qt.rgba(1, 1, 1, 0.08) : "transparent")
+
+                            Behavior on color {
+                                ColorAnimation { duration: 200; easing.type: Easing.OutCubic }
+                            }
+                            Behavior on scale {
+                                NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+                            }
+                            scale: aboutNavHover.hovered ? 1.02 : 1.0
+
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 3
+                                height: currentSection === modelData.id ? parent.height * 0.6 : 0
+                                radius: 2
+                                color: foregroundColor
+                                opacity: currentSection === modelData.id ? 0.8 : 0
+                                Behavior on height { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                                Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                            }
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 12
+                                anchors.rightMargin: 12
+                                spacing: 12
+
+                                Image {
+                                    id: aboutNavIcon
+                                    source: modelData.icon
+                                    sourceSize: Qt.size(18, 18)
+                                    visible: false
+                                }
+                                ColorOverlay {
+                                    width: 18
+                                    height: 18
+                                    source: aboutNavIcon
+                                    color: foregroundColor
+                                    opacity: currentSection === modelData.id ? 1.0 : 0.7
+                                }
+
+                                Text {
+                                    text: modelData.name
+                                    font.pixelSize: 14
+                                    font.weight: currentSection === modelData.id ? Font.Medium : Font.Normal
+                                    color: foregroundColor
+                                    opacity: currentSection === modelData.id ? 1.0 : 0.8
+                                    Layout.fillWidth: true
+                                }
+                            }
+
+                            HoverHandler {
+                                id: aboutNavHover
+                                cursorShape: Qt.PointingHandCursor
+                            }
+
+                            TapHandler {
+                                onTapped: currentSection = modelData.id
+                            }
+                        }
+                    }
                 }
         }
         
@@ -450,10 +570,14 @@ Rectangle {
                 Layout.fillHeight: true
                 clip: true
                 
-                ScrollBar.vertical.policy: ScrollBar.AsNeeded
+                ScrollBar.vertical.policy: currentSection === "about"
+                                           ? ScrollBar.AlwaysOff
+                                           : ScrollBar.AsNeeded
                 
                 contentWidth: availableWidth
-                contentHeight: contentColumn.implicitHeight
+                contentHeight: currentSection === "about"
+                                 ? Math.max(height, contentColumn.implicitHeight)
+                                 : contentColumn.implicitHeight
                 
                 ColumnLayout {
                     id: contentColumn
@@ -464,10 +588,13 @@ Rectangle {
                     Loader {
                         id: contentLoader
                         Layout.fillWidth: true
-                        Layout.topMargin: 24
-                        Layout.leftMargin: 32
-                        Layout.rightMargin: 32
-                        Layout.bottomMargin: 24
+                        Layout.preferredHeight: currentSection === "about"
+                                                ? settingsContainer.height
+                                                : -1
+                        Layout.topMargin: currentSection === "about" ? 0 : 24
+                        Layout.leftMargin: currentSection === "about" ? 0 : 32
+                        Layout.rightMargin: currentSection === "about" ? 0 : 32
+                        Layout.bottomMargin: currentSection === "about" ? 0 : 24
                         sourceComponent: {
                             switch(currentSection) {
                                 case "appearance": return appearanceContent
@@ -477,6 +604,7 @@ Rectangle {
                                 case "translation": return translationContent
                                 case "general": return generalContent
                                 case "discord": return discordContent
+                                case "about": return aboutContent
                                 default: return appearanceContent
                             }
                         }
@@ -508,7 +636,6 @@ Rectangle {
         property bool checked: false
         property string label: ""
         property string description: ""
-        property bool enabled: true
         
         signal toggled(bool checked)
         
@@ -790,6 +917,13 @@ Rectangle {
                 description: qsTr("Adapts the interface colors to the dominant tones of the current media")
                 checked: dynamicColoringEnabled
                 onToggled: (checked) => dynamicColoringToggled(checked)
+            }
+
+            ModernToggle {
+                label: qsTr("Windows Accent Color")
+                description: qsTr("Uses your Windows personalization accent color to style the app interface")
+                checked: windowsAccentColorEnabled
+                onToggled: (checked) => windowsAccentColorToggled(checked)
             }
             
             ModernToggle {
@@ -1091,6 +1225,7 @@ Rectangle {
                 font.pixelSize: 24
                 font.weight: Font.Bold
                 color: foregroundColor
+                Layout.fillWidth: true
                 Layout.bottomMargin: 8
             }
             
@@ -1099,6 +1234,7 @@ Rectangle {
                 font.pixelSize: 13
                 color: foregroundColor
                 opacity: 0.7
+                Layout.fillWidth: true
                 Layout.bottomMargin: 24
             }
             
@@ -1107,6 +1243,7 @@ Rectangle {
                 font.pixelSize: 15
                 font.weight: Font.Medium
                 color: foregroundColor
+                Layout.fillWidth: true
                 Layout.topMargin: 20
                 Layout.bottomMargin: 8
             }
@@ -1118,11 +1255,210 @@ Rectangle {
                 property string videoBackend: "mediaplayer"  // "mediaplayer", "wmf", or "libmpv"
                 property string subtitleEngine: "external"  // "embedded" or "external"
                 property string mpvRendererMode: "opengl"  // "opengl" or "d3d11" (only applies when videoBackend is "libmpv")
+                // YouTube "music video" quality (video-only URL shown in AudioPlayer + overlay).
+                // 0=auto; 480/720/1080 caps the picked format height.
+                property int musicVideoMaxHeight: 0
                 
                 // Ensure settings are synced when mpvRendererMode changes
                 onMpvRendererModeChanged: {
                     console.log("[Settings] mpvRendererMode changed to:", mpvRendererMode)
                     sync()
+                }
+            }
+
+            // Keep UI property in sync with persisted setting.
+            Component.onCompleted: {
+                if (settingsPage.musicVideoMaxHeight !== videoPlayerSettings.musicVideoMaxHeight) {
+                    settingsPage.musicVideoMaxHeight = videoPlayerSettings.musicVideoMaxHeight
+                }
+            }
+
+            Connections {
+                target: settingsPage
+                function onMusicVideoMaxHeightChanged() {
+                    if (videoPlayerSettings.musicVideoMaxHeight !== settingsPage.musicVideoMaxHeight) {
+                        videoPlayerSettings.musicVideoMaxHeight = settingsPage.musicVideoMaxHeight
+                        videoPlayerSettings.sync()
+                    }
+                }
+            }
+
+            Text {
+                text: qsTr("Music video quality")
+                font.pixelSize: 15
+                font.weight: Font.Medium
+                color: foregroundColor
+                Layout.fillWidth: true
+                Layout.topMargin: 20
+                Layout.bottomMargin: 8
+            }
+
+            Rectangle {
+                id: musicVideoQualitySelector
+                Layout.fillWidth: true
+                Layout.preferredHeight: 44
+                radius: 12
+                color: Qt.rgba(1, 1, 1, 0.08)
+                border.width: 1
+                border.color: Qt.rgba(1, 1, 1, 0.15)
+
+                readonly property var _options: [
+                    { label: qsTr("Auto (recommended)"), value: 0 },
+                    { label: qsTr("480p (low)"), value: 480 },
+                    { label: qsTr("720p (balanced)"), value: 720 },
+                    { label: qsTr("1080p (high)"), value: 1080 },
+                    { label: qsTr("1440p (very high)"), value: 1440 },
+                    { label: qsTr("4K (2160p)"), value: 2160 }
+                ]
+
+                function _labelForValue(v) {
+                    for (let i = 0; i < _options.length; i++) {
+                        if (_options[i].value === v) return _options[i].label
+                    }
+                    return qsTr("Auto (recommended)")
+                }
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 16
+                    anchors.rightMargin: 16
+
+                    Text {
+                        text: musicVideoQualitySelector._labelForValue(settingsPage.musicVideoMaxHeight)
+                        font.pixelSize: 14
+                        color: foregroundColor
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                    }
+
+                    Text {
+                        text: "▼"
+                        font.pixelSize: 12
+                        color: foregroundColor
+                        opacity: 0.6
+                    }
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: musicVideoQualityPopup.open()
+                }
+            }
+
+            Text {
+                text: qsTr("Lower quality is smoother and uses less CPU/bandwidth. This only affects the optional music-video view for YouTube tracks.")
+                font.pixelSize: 12
+                color: foregroundColor
+                opacity: 0.7
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                Layout.bottomMargin: 18
+            }
+
+            Popup {
+                id: musicVideoQualityPopup
+                x: 0
+                y: musicVideoQualitySelector.height + 2
+                width: musicVideoQualitySelector.width
+                height: 264  // 6 items * 44px each
+                modal: true
+                closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                parent: musicVideoQualitySelector
+                
+                padding: 0
+                topPadding: 0
+                bottomPadding: 0
+                leftPadding: 0
+                rightPadding: 0
+                
+                // Entrance and exit animations
+                enter: Transition {
+                    NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: 200; easing.type: Easing.OutCubic }
+                    NumberAnimation { property: "scale"; from: 0.95; to: 1.0; duration: 200; easing.type: Easing.OutCubic }
+                }
+                
+                exit: Transition {
+                    NumberAnimation { property: "opacity"; from: 1.0; to: 0.0; duration: 200; easing.type: Easing.InCubic }
+                    NumberAnimation { property: "scale"; from: 1.0; to: 0.95; duration: 200; easing.type: Easing.InCubic }
+                }
+                
+                background: Rectangle {
+                    color: Qt.rgba(
+                        Qt.lighter(accentColor, 1.3).r,
+                        Qt.lighter(accentColor, 1.3).g,
+                        Qt.lighter(accentColor, 1.3).b,
+                        0.98
+                    )
+                    border.color: Qt.rgba(1, 1, 1, 0.15)
+                    border.width: 1
+                    radius: 12
+                    
+                    // Shadow
+                    layer.enabled: true
+                    layer.effect: DropShadow {
+                        transparentBorder: true
+                        horizontalOffset: 0
+                        verticalOffset: 4
+                        radius: 16
+                        samples: 32
+                        color: Qt.rgba(0, 0, 0, 0.3)
+                    }
+                }
+                
+                contentItem: Column {
+                    spacing: 0
+                    clip: true
+                    width: musicVideoQualityPopup.width
+                    anchors.fill: parent
+                    
+                    Repeater {
+                        model: musicVideoQualitySelector._options
+                        
+                        Rectangle {
+                            width: parent.width
+                            height: 44
+                            radius: 0
+                            topLeftRadius: index === 0 ? 11 : 0
+                            topRightRadius: index === 0 ? 11 : 0
+                            bottomLeftRadius: index === musicVideoQualitySelector._options.length - 1 ? 11 : 0
+                            bottomRightRadius: index === musicVideoQualitySelector._options.length - 1 ? 11 : 0
+                            color: popupItemHover.hovered ? Qt.rgba(1, 1, 1, 0.12) : "transparent"
+                            
+                            Behavior on color {
+                                ColorAnimation { duration: 150; easing.type: Easing.OutCubic }
+                            }
+                            
+                            property bool isSelected: settingsPage.musicVideoMaxHeight === modelData.value
+                            
+                            Text {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 16
+                                anchors.right: parent.right
+                                anchors.rightMargin: 16
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: modelData.label
+                                color: foregroundColor
+                                font.pixelSize: 14
+                                font.weight: isSelected ? Font.Medium : Font.Normal
+                                opacity: isSelected ? 1.0 : 0.8
+                                elide: Text.ElideRight
+                            }
+                            
+                            HoverHandler {
+                                id: popupItemHover
+                                cursorShape: Qt.PointingHandCursor
+                            }
+                            
+                            TapHandler {
+                                onTapped: {
+                                    settingsPage.musicVideoMaxHeight = modelData.value
+                                    settingsPage.musicVideoMaxHeightSelected(modelData.value)
+                                    musicVideoQualityPopup.close()
+                                }
+                            }
+                        }
+                    }
                 }
             }
             
@@ -1144,7 +1480,12 @@ Rectangle {
                         text: {
                             var backend = videoPlayerSettings.videoBackend || (videoPlayerSettings.useWMF ? "wmf" : "mediaplayer")
                             if (backend === "libvlc") return qsTr("VLC (libvlc)")
-                            if (backend === "libmpv") return qsTr("libmpv")
+                            if (backend === "libmpv") {
+                                if (typeof libmpvAvailable !== "undefined" && libmpvAvailable === true)
+                                    return qsTr("libmpv")
+                                else
+                                    return qsTr("libmpv (unavailable in Release)")
+                            }
                             if (backend === "wmf") return qsTr("WMF (Windows Media Foundation)")
                             if (backend === "ffmpeg") return qsTr("FFmpeg (D3D11)")
                             return qsTr("MediaPlayer (Qt Multimedia)")
@@ -1180,14 +1521,16 @@ Rectangle {
                     if (backend === "libvlc") {
                         return qsTr("VLC provides excellent format support and stability, similar to the standalone VLC player. Requires restart to take effect.")
                     } else if (backend === "libmpv") {
-                        return qsTr("libmpv provides full HDR10/Dolby Vision support, proper tone mapping, BT.2020 color space conversion, and GPU-accelerated output. Best for HDR content. Requires restart to take effect.")
+                        if (typeof libmpvAvailable !== "undefined" && libmpvAvailable === true)
+                            return qsTr("libmpv provides full HDR10/Dolby Vision support, proper tone mapping, BT.2020 color space conversion, and GPU-accelerated output. Best for HDR content. Requires restart to take effect.")
+                        else
+                            return qsTr("libmpv is not available in Release builds. Please select another backend. FFmpeg (D3D11) provides similar HDR support.")
                     } else if (backend === "wmf") {
                         return qsTr("WMF provides better hardware acceleration and handles problematic videos better, but does not support audio/subtitle track selection. Requires restart to take effect.")
                     } else if (backend === "ffmpeg") {
-                        return qsTr("FFmpeg with D3D11VA provides modern GPU-accelerated HDR playback, zero-copy rendering, and proper HDR10/Dolby Vision support. Best for 4K HDR content. Requires restart to take effect.")
-                    } else {
-                        return qsTr("MediaPlayer supports audio and subtitle track selection, but may have issues with some video formats and limited HDR support. Requires restart to take effect.")
+                        return qsTr("FFmpeg with D3D11VA provides modern GPU-accelerated HDR playback with excellent format support. Best for 4K HDR content on Windows. Requires restart to take effect.")
                     }
+                    return qsTr("Qt Multimedia provides basic playback with track selection support. Good for standard videos. Requires restart to take effect.")
                 }
                 font.pixelSize: 12
                 color: foregroundColor
@@ -1202,16 +1545,40 @@ Rectangle {
                 x: 0
                 y: playerSelector.height + 2
                 width: playerSelector.width
-                height: Math.min(300, playerList.height + 16)
+                height: 264  // 6 items * 44px each
                 modal: true
                 closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                parent: playerSelector
+                
+                padding: 0
+                topPadding: 0
+                bottomPadding: 0
+                leftPadding: 0
+                rightPadding: 0
+                
+                // Entrance and exit animations
+                enter: Transition {
+                    NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: 200; easing.type: Easing.OutCubic }
+                    NumberAnimation { property: "scale"; from: 0.95; to: 1.0; duration: 200; easing.type: Easing.OutCubic }
+                }
+                
+                exit: Transition {
+                    NumberAnimation { property: "opacity"; from: 1.0; to: 0.0; duration: 200; easing.type: Easing.InCubic }
+                    NumberAnimation { property: "scale"; from: 1.0; to: 0.95; duration: 200; easing.type: Easing.InCubic }
+                }
                 
                 background: Rectangle {
-                    radius: 12
-                    color: Qt.rgba(0.1, 0.1, 0.1, 0.95)
-                    border.width: 1
+                    color: Qt.rgba(
+                        Qt.lighter(accentColor, 1.3).r,
+                        Qt.lighter(accentColor, 1.3).g,
+                        Qt.lighter(accentColor, 1.3).b,
+                        0.98
+                    )
                     border.color: Qt.rgba(1, 1, 1, 0.15)
+                    border.width: 1
+                    radius: 12
                     
+                    // Shadow
                     layer.enabled: true
                     layer.effect: DropShadow {
                         transparentBorder: true
@@ -1219,42 +1586,74 @@ Rectangle {
                         verticalOffset: 4
                         radius: 16
                         samples: 32
-                        color: Qt.rgba(0, 0, 0, 0.5)
+                        color: Qt.rgba(0, 0, 0, 0.3)
                     }
                 }
                 
-                Column {
-                    id: playerList
-                    width: parent.width
-                    spacing: 4
-                    padding: 8
+                contentItem: Column {
+                    spacing: 0
+                    clip: true
+                    width: playerPopup.width
+                    anchors.fill: parent
+                    
+                    // Build video backend options dynamically based on what's available
+                    property var videoBackendOptions: {
+                        var options = [
+                            { value: "mediaplayer", name: qsTr("MediaPlayer (Qt Multimedia)") },
+                            { value: "wmf", name: qsTr("WMF (Windows Media Foundation)") },
+                            { value: "libvlc", name: qsTr("VLC (libvlc)") }
+                        ]
+                        // Only add libmpv option if it's available (debug builds)
+                        if (typeof libmpvAvailable !== "undefined" && libmpvAvailable === true) {
+                            options.push({ value: "libmpv", name: qsTr("libmpv") })
+                        }
+                        options.push({ value: "ffmpeg", name: qsTr("FFmpeg (D3D11)") })
+                        return options
+                    }
                     
                     Repeater {
-                        model: [
-                            { value: "mediaplayer", label: qsTr("MediaPlayer (Qt Multimedia)"), description: qsTr("Supports track selection, basic HDR") },
-                            { value: "wmf", label: qsTr("WMF (Windows Media Foundation)"), description: qsTr("Better hardware acceleration, Windows only") },
-                            { value: "libvlc", label: qsTr("VLC (libvlc)"), description: qsTr("Excellent format support, reliable playback") },
-                            { value: "libmpv", label: qsTr("libmpv"), description: qsTr("Full HDR10/Dolby Vision support, proper tone mapping, GPU-accelerated (⚠️ May not work on Qt 6 Windows - use WMF instead)") },
-                            { value: "ffmpeg", label: qsTr("FFmpeg (D3D11)"), description: qsTr("Modern GPU-accelerated HDR playback with D3D11VA, best for 4K HDR content") }
-                        ]
+                        model: parent.videoBackendOptions
                         
                         Rectangle {
-                            width: playerList.width - 16
-                            height: 52
-                            radius: 8
-                            color: playerItemMouseArea.containsMouse ? Qt.rgba(1, 1, 1, 0.1) : "transparent"
+                            width: parent.width
+                            height: 44
+                            radius: 0
+                            topLeftRadius: index === 0 ? 11 : 0
+                            topRightRadius: index === 0 ? 11 : 0
+                            bottomLeftRadius: index === (model.length - 1) ? 11 : 0
+                            bottomRightRadius: index === (model.length - 1) ? 11 : 0
+                            color: popupItemHover.hovered ? Qt.rgba(1, 1, 1, 0.12) : "transparent"
                             
-                            // Check both new and legacy settings for backward compatibility
+                            Behavior on color {
+                                ColorAnimation { duration: 150; easing.type: Easing.OutCubic }
+                            }
+                            
                             property bool isSelected: {
                                 var backend = videoPlayerSettings.videoBackend || (videoPlayerSettings.useWMF ? "wmf" : "mediaplayer")
                                 return backend === modelData.value
                             }
                             
-                            MouseArea {
-                                id: playerItemMouseArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                onClicked: {
+                            Text {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 16
+                                anchors.right: parent.right
+                                anchors.rightMargin: 16
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: modelData.name
+                                color: foregroundColor
+                                font.pixelSize: 14
+                                font.weight: isSelected ? Font.Medium : Font.Normal
+                                opacity: isSelected ? 1.0 : 0.8
+                                elide: Text.ElideRight
+                            }
+                            
+                            HoverHandler {
+                                id: popupItemHover
+                                cursorShape: Qt.PointingHandCursor
+                            }
+                            
+                            TapHandler {
+                                onTapped: {
                                     videoPlayerSettings.videoBackend = modelData.value
                                     // Update legacy setting for backward compatibility
                                     if (modelData.value === "wmf") {
@@ -1263,49 +1662,6 @@ Rectangle {
                                         videoPlayerSettings.useWMF = false
                                     }
                                     playerPopup.close()
-                                }
-                            }
-                            
-                            Column {
-                                anchors.left: parent.left
-                                anchors.leftMargin: 12
-                                anchors.right: parent.right
-                                anchors.rightMargin: 12
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 4
-                                
-                                Text {
-                                    text: modelData.label
-                                    font.pixelSize: 14
-                                    font.weight: isSelected ? Font.Medium : Font.Normal
-                                    color: foregroundColor
-                                }
-                                
-                                Text {
-                                    text: modelData.description
-                                    font.pixelSize: 12
-                                    color: foregroundColor
-                                    opacity: 0.7
-                                }
-                            }
-                            
-                            Rectangle {
-                                anchors.right: parent.right
-                                anchors.rightMargin: 12
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: 20
-                                height: 20
-                                radius: 10
-                                color: isSelected ? "#4CAF50" : "transparent"
-                                border.width: isSelected ? 0 : 2
-                                border.color: Qt.rgba(1, 1, 1, 0.3)
-                                
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "✓"
-                                    font.pixelSize: 14
-                                    color: "white"
-                                    visible: isSelected
                                 }
                             }
                         }
@@ -1318,6 +1674,7 @@ Rectangle {
                 font.pixelSize: 15
                 font.weight: Font.Medium
                 color: foregroundColor
+                Layout.fillWidth: true
                 Layout.topMargin: 32
                 Layout.bottomMargin: 8
             }
@@ -1382,17 +1739,40 @@ Rectangle {
                 x: 0
                 y: subtitleEngineSelector.height + 2
                 width: subtitleEngineSelector.width
-                height: Math.min(200, subtitleEngineList.height + 16)
+                height: 88  // 2 items * 44px each
                 modal: true
                 closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
                 parent: subtitleEngineSelector
                 
+                padding: 0
+                topPadding: 0
+                bottomPadding: 0
+                leftPadding: 0
+                rightPadding: 0
+                
+                // Entrance and exit animations
+                enter: Transition {
+                    NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: 200; easing.type: Easing.OutCubic }
+                    NumberAnimation { property: "scale"; from: 0.95; to: 1.0; duration: 200; easing.type: Easing.OutCubic }
+                }
+                
+                exit: Transition {
+                    NumberAnimation { property: "opacity"; from: 1.0; to: 0.0; duration: 200; easing.type: Easing.InCubic }
+                    NumberAnimation { property: "scale"; from: 1.0; to: 0.95; duration: 200; easing.type: Easing.InCubic }
+                }
+                
                 background: Rectangle {
-                    radius: 12
-                    color: Qt.rgba(0.1, 0.1, 0.1, 0.95)
-                    border.width: 1
+                    color: Qt.rgba(
+                        Qt.lighter(accentColor, 1.3).r,
+                        Qt.lighter(accentColor, 1.3).g,
+                        Qt.lighter(accentColor, 1.3).b,
+                        0.98
+                    )
                     border.color: Qt.rgba(1, 1, 1, 0.15)
+                    border.width: 1
+                    radius: 12
                     
+                    // Shadow
                     layer.enabled: true
                     layer.effect: DropShadow {
                         transparentBorder: true
@@ -1400,80 +1780,61 @@ Rectangle {
                         verticalOffset: 4
                         radius: 16
                         samples: 32
-                        color: Qt.rgba(0, 0, 0, 0.5)
+                        color: Qt.rgba(0, 0, 0, 0.3)
                     }
                 }
                 
                 contentItem: Column {
-                    id: subtitleEngineList
+                    spacing: 0
+                    clip: true
                     width: subtitleEnginePopup.width
-                    spacing: 4
-                    padding: 8
+                    anchors.fill: parent
                     
                     Repeater {
                         model: [
-                            { value: "external", label: qsTr("External (imported files)"), description: qsTr("SRT, ASS, SSA support") },
-                            { value: "embedded", label: qsTr("Embedded (from video)"), description: qsTr("Uses video file subtitles") }
+                            { value: "external", name: qsTr("External (imported files)") },
+                            { value: "embedded", name: qsTr("Embedded (from video)") }
                         ]
                         
                         Rectangle {
-                            width: subtitleEngineList.width - 16
-                            height: 52
-                            radius: 8
-                            color: subtitleEngineItemMouseArea.containsMouse ? Qt.rgba(1, 1, 1, 0.1) : "transparent"
+                            width: parent.width
+                            height: 44
+                            radius: 0
+                            topLeftRadius: index === 0 ? 11 : 0
+                            topRightRadius: index === 0 ? 11 : 0
+                            bottomLeftRadius: index === 1 ? 11 : 0
+                            bottomRightRadius: index === 1 ? 11 : 0
+                            color: popupItemHover.hovered ? Qt.rgba(1, 1, 1, 0.12) : "transparent"
+                            
+                            Behavior on color {
+                                ColorAnimation { duration: 150; easing.type: Easing.OutCubic }
+                            }
                             
                             property bool isSelected: videoPlayerSettings.subtitleEngine === modelData.value
                             
-                            MouseArea {
-                                id: subtitleEngineItemMouseArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                onClicked: {
+                            Text {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 16
+                                anchors.right: parent.right
+                                anchors.rightMargin: 16
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: modelData.name
+                                color: foregroundColor
+                                font.pixelSize: 14
+                                font.weight: isSelected ? Font.Medium : Font.Normal
+                                opacity: isSelected ? 1.0 : 0.8
+                                elide: Text.ElideRight
+                            }
+                            
+                            HoverHandler {
+                                id: popupItemHover
+                                cursorShape: Qt.PointingHandCursor
+                            }
+                            
+                            TapHandler {
+                                onTapped: {
                                     videoPlayerSettings.subtitleEngine = modelData.value
                                     subtitleEnginePopup.close()
-                                }
-                            }
-                            
-                            Column {
-                                anchors.left: parent.left
-                                anchors.leftMargin: 12
-                                anchors.right: parent.right
-                                anchors.rightMargin: 12
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 4
-                                
-                                Text {
-                                    text: modelData.label
-                                    font.pixelSize: 14
-                                    font.weight: isSelected ? Font.Medium : Font.Normal
-                                    color: foregroundColor
-                                }
-                                
-                                Text {
-                                    text: modelData.description
-                                    font.pixelSize: 12
-                                    color: foregroundColor
-                                    opacity: 0.7
-                                }
-                            }
-                            
-                            Rectangle {
-                                anchors.right: parent.right
-                                anchors.rightMargin: 12
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: 20
-                                height: 20
-                                radius: 10
-                                color: isSelected ? "#4CAF50" : "transparent"
-                                border.width: isSelected ? 0 : 2
-                                border.color: Qt.rgba(1, 1, 1, 0.3)
-                                
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "✓"
-                                    font.pixelSize: 14
-                                    color: "white"
-                                    visible: isSelected
                                 }
                             }
                         }
@@ -1487,6 +1848,7 @@ Rectangle {
                 font.pixelSize: 15
                 font.weight: Font.Medium
                 color: foregroundColor
+                Layout.fillWidth: true
                 Layout.topMargin: 32
                 Layout.bottomMargin: 8
                 visible: {
@@ -1567,17 +1929,40 @@ Rectangle {
                 x: 0
                 y: rendererModeSelector.height + 2
                 width: rendererModeSelector.width
-                height: Math.min(200, rendererModeList.height + 16)
+                height: 88  // 2 items * 44px each
                 modal: true
                 closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
                 parent: rendererModeSelector
                 
+                padding: 0
+                topPadding: 0
+                bottomPadding: 0
+                leftPadding: 0
+                rightPadding: 0
+                
+                // Entrance and exit animations
+                enter: Transition {
+                    NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: 200; easing.type: Easing.OutCubic }
+                    NumberAnimation { property: "scale"; from: 0.95; to: 1.0; duration: 200; easing.type: Easing.OutCubic }
+                }
+                
+                exit: Transition {
+                    NumberAnimation { property: "opacity"; from: 1.0; to: 0.0; duration: 200; easing.type: Easing.InCubic }
+                    NumberAnimation { property: "scale"; from: 1.0; to: 0.95; duration: 200; easing.type: Easing.InCubic }
+                }
+                
                 background: Rectangle {
-                    radius: 12
-                    color: Qt.rgba(0.1, 0.1, 0.1, 0.95)
-                    border.width: 1
+                    color: Qt.rgba(
+                        Qt.lighter(accentColor, 1.3).r,
+                        Qt.lighter(accentColor, 1.3).g,
+                        Qt.lighter(accentColor, 1.3).b,
+                        0.98
+                    )
                     border.color: Qt.rgba(1, 1, 1, 0.15)
+                    border.width: 1
+                    radius: 12
                     
+                    // Shadow
                     layer.enabled: true
                     layer.effect: DropShadow {
                         transparentBorder: true
@@ -1585,35 +1970,59 @@ Rectangle {
                         verticalOffset: 4
                         radius: 16
                         samples: 32
-                        color: Qt.rgba(0, 0, 0, 0.5)
+                        color: Qt.rgba(0, 0, 0, 0.3)
                     }
                 }
                 
                 contentItem: Column {
-                    id: rendererModeList
+                    spacing: 0
+                    clip: true
                     width: rendererModePopup.width
-                    spacing: 4
-                    padding: 8
+                    anchors.fill: parent
                     
                     Repeater {
                         model: [
-                            { value: "d3d11", label: qsTr("D3D11 (Recommended for Windows)"), description: qsTr("Native DirectX 11, better Windows integration") },
-                            { value: "opengl", label: qsTr("OpenGL (Legacy)"), description: qsTr("OpenGL renderer, may have Windows issues") }
+                            { value: "d3d11", name: qsTr("D3D11 (Recommended for Windows)") },
+                            { value: "opengl", name: qsTr("OpenGL (Legacy)") }
                         ]
                         
                         Rectangle {
-                            width: rendererModePopup.width - 16
-                            height: 52
-                            radius: 8
-                            color: rendererModeItemMouseArea.containsMouse ? Qt.rgba(1, 1, 1, 0.1) : "transparent"
+                            width: parent.width
+                            height: 44
+                            radius: 0
+                            topLeftRadius: index === 0 ? 11 : 0
+                            topRightRadius: index === 0 ? 11 : 0
+                            bottomLeftRadius: index === 1 ? 11 : 0
+                            bottomRightRadius: index === 1 ? 11 : 0
+                            color: popupItemHover.hovered ? Qt.rgba(1, 1, 1, 0.12) : "transparent"
+                            
+                            Behavior on color {
+                                ColorAnimation { duration: 150; easing.type: Easing.OutCubic }
+                            }
                             
                             property bool isSelected: videoPlayerSettings.mpvRendererMode === modelData.value
                             
-                            MouseArea {
-                                id: rendererModeItemMouseArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                onClicked: {
+                            Text {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 16
+                                anchors.right: parent.right
+                                anchors.rightMargin: 16
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: modelData.name
+                                color: foregroundColor
+                                font.pixelSize: 14
+                                font.weight: isSelected ? Font.Medium : Font.Normal
+                                opacity: isSelected ? 1.0 : 0.8
+                                elide: Text.ElideRight
+                            }
+                            
+                            HoverHandler {
+                                id: popupItemHover
+                                cursorShape: Qt.PointingHandCursor
+                            }
+                            
+                            TapHandler {
+                                onTapped: {
                                     console.log("[Settings] Changing mpvRendererMode from", videoPlayerSettings.mpvRendererMode, "to", modelData.value)
                                     videoPlayerSettings.mpvRendererMode = modelData.value
                                     console.log("[Settings] mpvRendererMode is now:", videoPlayerSettings.mpvRendererMode)
@@ -1621,54 +2030,6 @@ Rectangle {
                                     videoPlayerSettings.sync()
                                     console.log("[Settings] Settings synced to disk")
                                     rendererModePopup.close()
-                                }
-                            }
-                            
-                            RowLayout {
-                                anchors.left: parent.left
-                                anchors.leftMargin: 12
-                                anchors.right: parent.right
-                                anchors.rightMargin: 12
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 12
-                                
-                                Column {
-                                    Layout.fillWidth: true
-                                    spacing: 4
-                                    
-                                    Text {
-                                        text: modelData.label
-                                        font.pixelSize: 14
-                                        font.weight: isSelected ? Font.Medium : Font.Normal
-                                        color: foregroundColor
-                                        elide: Text.ElideRight
-                                    }
-                                    
-                                    Text {
-                                        text: modelData.description
-                                        font.pixelSize: 12
-                                        color: foregroundColor
-                                        opacity: 0.7
-                                        wrapMode: Text.WordWrap
-                                        Layout.fillWidth: true
-                                    }
-                                }
-                                
-                                Rectangle {
-                                    Layout.preferredWidth: 20
-                                    Layout.preferredHeight: 20
-                                    radius: 10
-                                    color: isSelected ? "#4CAF50" : "transparent"
-                                    border.width: isSelected ? 0 : 2
-                                    border.color: Qt.rgba(1, 1, 1, 0.3)
-                                    
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "✓"
-                                        font.pixelSize: 14
-                                        color: "white"
-                                        visible: isSelected
-                                    }
                                 }
                             }
                         }
@@ -2615,6 +2976,198 @@ Rectangle {
                         color: foregroundColor
                         opacity: 0.8
                         Layout.fillWidth: true
+                    }
+                }
+            }
+        }
+    }
+
+    Component {
+        id: aboutContent
+
+        Item {
+            width: settingsContainer.width
+            height: settingsContainer.height
+            implicitHeight: height
+
+            property int titleClickCount: 0
+
+            Rectangle {
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.margins: 16
+                width: 36
+                height: 36
+                radius: 10
+                color: aboutBackMa.pressed
+                       ? Qt.rgba(0, 0, 0, 0.12)
+                       : (aboutBackMa.containsMouse ? Qt.rgba(0, 0, 0, 0.08) : Qt.rgba(0, 0, 0, 0.04))
+                z: 2
+
+                Image {
+                    id: aboutBackIcon
+                    anchors.centerIn: parent
+                    source: "qrc:/qlementine/icons/16/navigation/chevron-left.svg"
+                    sourceSize: Qt.size(18, 18)
+                    visible: false
+                }
+                ColorOverlay {
+                    anchors.fill: aboutBackIcon
+                    source: aboutBackIcon
+                    color: "#2a2a2a"
+                }
+
+                MouseArea {
+                    id: aboutBackMa
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: currentSection = "appearance"
+                }
+            }
+
+            ColumnLayout {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - 64, 520)
+                spacing: 10
+
+                Item {
+                    id: titleBounceHost
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: appTitleText.implicitHeight + 40
+
+                    property real bounceScale: 1.0
+                    scale: bounceScale
+                    transformOrigin: Item.Center
+
+                    function squashDown() {
+                        titleBounceReleaseAnim.stop()
+                        titleBouncePressAnim.from = bounceScale
+                        titleBouncePressAnim.restart()
+                    }
+
+                    function rebound() {
+                        titleBouncePressAnim.stop()
+                        titleBounceReleaseAnim.from = bounceScale
+                        titleBounceReleaseAnim.restart()
+                    }
+
+                    Text {
+                        id: appTitleText
+                        anchors.centerIn: parent
+                        text: "s3rpent media"
+                        font.pixelSize: Math.min(52, Math.max(36, titleBounceHost.width * 0.22))
+                        font.bold: true
+                        font.letterSpacing: -0.5
+                        color: "#141414"
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+
+                    TapHandler {
+                        id: titleTap
+                        margin: 14
+                        cursorShape: Qt.PointingHandCursor
+                        gesturePolicy: TapHandler.DragWithinBounds
+
+                        onPressedChanged: {
+                            if (pressed)
+                                titleBounceHost.squashDown()
+                            else
+                                titleBounceHost.rebound()
+                        }
+
+                        onTapped: {
+                            titleClickCount++
+                            if (titleClickCount >= 10) {
+                                titleClickCount = 0
+                                settingsPage.badAppleEasterEggClicked()
+                            }
+                        }
+                    }
+
+                    NumberAnimation {
+                        id: titleBouncePressAnim
+                        target: titleBounceHost
+                        property: "bounceScale"
+                        to: 0.86
+                        duration: 140
+                        easing.type: Easing.OutCubic
+                    }
+
+                    NumberAnimation {
+                        id: titleBounceReleaseAnim
+                        target: titleBounceHost
+                        property: "bounceScale"
+                        to: 1.0
+                        duration: 680
+                        easing.type: Easing.OutBack
+                        easing.overshoot: 1.75
+                    }
+                }
+
+                Text {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: qsTr("Version %1").arg(settingsPage.appVersion)
+                    font.pixelSize: 15
+                    color: "#5a5a5a"
+                    horizontalAlignment: Text.AlignHCenter
+                    Layout.fillWidth: true
+                    Layout.topMargin: 4
+                }
+
+                Item {
+                    Layout.preferredHeight: 28
+                    Layout.fillWidth: true
+                }
+
+                Text {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: "Motan"
+                    font.pixelSize: 22
+                    font.weight: Font.DemiBold
+                    color: "#1a1a1a"
+                    horizontalAlignment: Text.AlignHCenter
+                    Layout.fillWidth: true
+                }
+
+                Rectangle {
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: githubRow.implicitWidth + 20
+                    Layout.preferredHeight: githubRow.implicitHeight + 12
+                    radius: 10
+                    color: githubMa.pressed
+                           ? Qt.rgba(0, 0, 0, 0.10)
+                           : (githubMa.containsMouse ? Qt.rgba(0, 0, 0, 0.06) : Qt.rgba(0, 0, 0, 0.03))
+                    border.width: 1
+                    border.color: Qt.rgba(0, 0, 0, 0.08)
+
+                    RowLayout {
+                        id: githubRow
+                        anchors.centerIn: parent
+                        spacing: 8
+
+                        Text {
+                            text: "GitHub"
+                            font.pixelSize: 13
+                            font.weight: Font.Medium
+                            color: "#3a3a3a"
+                        }
+
+                        Text {
+                            text: "MotanOfficial"
+                            font.pixelSize: 14
+                            font.underline: githubMa.containsMouse
+                            color: githubMa.containsMouse ? "#111111" : "#2a2a2a"
+                        }
+                    }
+
+                    MouseArea {
+                        id: githubMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Qt.openUrlExternally("https://github.com/MotanOfficial/")
                     }
                 }
             }

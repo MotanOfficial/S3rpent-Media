@@ -13,7 +13,7 @@ CoverArtClient::CoverArtClient(QObject *parent)
     , m_lastError("")
 {
     connect(m_networkManager, &QNetworkAccessManager::finished,
-            this, &CoverArtClient::onMusicBrainzReplyFinished);
+            this, &CoverArtClient::onNetworkReplyFinished);
 }
 
 CoverArtClient::~CoverArtClient()
@@ -67,8 +67,6 @@ void CoverArtClient::searchMusicBrainz(const QString &trackName, const QString &
                      "s3rpent_media/0.1 (https://github.com/s3rpent/s3rpent_media)");
     request.setRawHeader("Accept", "application/json");
 
-    qDebug() << "[CoverArt] Searching MusicBrainz for:" << trackName << "-" << artistName;
-    
     QNetworkReply *reply = m_networkManager->get(request);
     reply->setProperty("requestType", "musicbrainz");
 }
@@ -95,18 +93,24 @@ void CoverArtClient::fetchFromCoverArtArchive(const QString &mbid, bool isReleas
     request.setHeader(QNetworkRequest::UserAgentHeader, 
                      "s3rpent_media/0.1 (https://github.com/s3rpent/s3rpent_media)");
 
-    qDebug() << "[CoverArt] Fetching from Cover Art Archive:" << endpoint;
-    
-    // Disconnect from MusicBrainz handler and connect to Cover Art Archive handler
-    disconnect(m_networkManager, &QNetworkAccessManager::finished,
-               this, &CoverArtClient::onMusicBrainzReplyFinished);
-    connect(m_networkManager, &QNetworkAccessManager::finished,
-            this, &CoverArtClient::onCoverArtArchiveReplyFinished);
-
     QNetworkReply *reply = m_networkManager->get(request);
     reply->setProperty("requestType", "coverartarchive");
     reply->setProperty("mbid", mbid);
     reply->setProperty("isReleaseGroup", isReleaseGroup);
+}
+
+void CoverArtClient::onNetworkReplyFinished(QNetworkReply *reply)
+{
+    if (!reply) {
+        return;
+    }
+    const QString requestType = reply->property("requestType").toString();
+    if (requestType == "coverartarchive") {
+        onCoverArtArchiveReplyFinished(reply);
+        return;
+    }
+    // Default: musicbrainz (and backwards-compat if property missing)
+    onMusicBrainzReplyFinished(reply);
 }
 
 void CoverArtClient::onMusicBrainzReplyFinished(QNetworkReply *reply)
@@ -126,15 +130,12 @@ void CoverArtClient::onMusicBrainzReplyFinished(QNetworkReply *reply)
     QString mbid = extractMBIDFromMusicBrainzResponse(data);
     
     if (mbid.isEmpty()) {
-        qDebug() << "[CoverArt] No MBID found in MusicBrainz response";
         setLoading(false);
         setLastError("No matching release found");
         emit coverArtNotFound();
         return;
     }
 
-    qDebug() << "[CoverArt] Found MBID:" << mbid;
-    
     // Determine if this is a release-group or release MBID
     // If we have both, try release-group first
     bool isReleaseGroup = !m_currentReleaseGroupMbid.isEmpty() && mbid == m_currentReleaseGroupMbid;
@@ -152,7 +153,6 @@ void CoverArtClient::onCoverArtArchiveReplyFinished(QNetworkReply *reply)
         QString mbid = reply->property("mbid").toString();
         
         if (isReleaseGroup && !m_currentReleaseMbid.isEmpty() && m_currentReleaseMbid != mbid) {
-            qDebug() << "[CoverArt] Release-group not found, trying release MBID:" << m_currentReleaseMbid;
             reply->deleteLater();
             fetchFromCoverArtArchive(m_currentReleaseMbid, false);
             return;
@@ -172,7 +172,6 @@ void CoverArtClient::onCoverArtArchiveReplyFinished(QNetworkReply *reply)
     QVariant redirectUrl = reply->attribute(QNetworkRequest::RedirectionTargetAttribute);
     if (redirectUrl.isValid()) {
         QString coverArtUrl = redirectUrl.toUrl().toString();
-        qDebug() << "[CoverArt] Found cover art URL (redirect):" << coverArtUrl;
         setLoading(false);
         emit coverArtFound(coverArtUrl);
         reply->deleteLater();
@@ -184,7 +183,6 @@ void CoverArtClient::onCoverArtArchiveReplyFinished(QNetworkReply *reply)
         QUrl location = reply->header(QNetworkRequest::LocationHeader).toUrl();
         if (!location.isEmpty()) {
             QString coverArtUrl = location.toString();
-            qDebug() << "[CoverArt] Found cover art URL (from Location header):" << coverArtUrl;
             setLoading(false);
             emit coverArtFound(coverArtUrl);
             reply->deleteLater();
@@ -202,7 +200,6 @@ void CoverArtClient::onCoverArtArchiveReplyFinished(QNetworkReply *reply)
         // The final URL should be the actual image URL (usually from archive.org)
         if (finalUrl != requestUrl) {
             QString coverArtUrl = finalUrl.toString();
-            qDebug() << "[CoverArt] Found cover art URL (after redirect, status 200):" << coverArtUrl;
             setLoading(false);
             emit coverArtFound(coverArtUrl);
             reply->deleteLater();
@@ -214,7 +211,6 @@ void CoverArtClient::onCoverArtArchiveReplyFinished(QNetworkReply *reply)
         QString contentType = reply->header(QNetworkRequest::ContentTypeHeader).toString();
         if (contentType.startsWith("image/")) {
             QString coverArtUrl = finalUrl.toString();
-            qDebug() << "[CoverArt] Found cover art URL (direct image, status 200):" << coverArtUrl;
             setLoading(false);
             emit coverArtFound(coverArtUrl);
             reply->deleteLater();
@@ -227,7 +223,6 @@ void CoverArtClient::onCoverArtArchiveReplyFinished(QNetworkReply *reply)
         // Check if it's a valid image URL (contains image extension or is from archive.org)
         if (coverArtUrl.contains(".jpg") || coverArtUrl.contains(".png") || 
             coverArtUrl.contains("archive.org") || coverArtUrl.contains("coverartarchive.org")) {
-            qDebug() << "[CoverArt] Found cover art URL (status 200, using final URL):" << coverArtUrl;
             setLoading(false);
             emit coverArtFound(coverArtUrl);
             reply->deleteLater();
@@ -258,7 +253,6 @@ QString CoverArtClient::extractMBIDFromMusicBrainzResponse(const QByteArray &dat
     QJsonArray releases = root.value("releases").toArray();
     
     if (releases.isEmpty()) {
-        qDebug() << "[CoverArt] No releases found in MusicBrainz response";
         return QString();
     }
 
@@ -276,19 +270,16 @@ QString CoverArtClient::extractMBIDFromMusicBrainzResponse(const QByteArray &dat
     // Store MBIDs as properties for later use
     // We'll try release-group first, then release
     if (!releaseGroupMbid.isEmpty()) {
-        qDebug() << "[CoverArt] Found release-group MBID:" << releaseGroupMbid << "and release MBID:" << releaseMbid;
         // Store both - we'll try release-group first
         m_currentReleaseGroupMbid = releaseGroupMbid;
         m_currentReleaseMbid = releaseMbid;
         return releaseGroupMbid;  // Return release-group for first attempt
     } else if (!releaseMbid.isEmpty()) {
-        qDebug() << "[CoverArt] Found release MBID:" << releaseMbid;
         m_currentReleaseMbid = releaseMbid;
         m_currentReleaseGroupMbid = "";
         return releaseMbid;
     }
     
-    qDebug() << "[CoverArt] No MBID found in MusicBrainz response";
     return QString();
 }
 

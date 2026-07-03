@@ -16,6 +16,16 @@ Item {
     // Timer to update metadata list during playback (for duration/time updates)
     property var _playbackUpdateTimer: null
     
+    function refreshAudioPlayerMetadata(reason) {
+        if (!metadataPopupManager.mainWindow.isAudio || !metadataPopupManager.audioPlayer)
+            return
+        if (typeof metadataPopupManager.audioPlayer.attemptMetadataRefresh === "function")
+            metadataPopupManager.audioPlayer.attemptMetadataRefresh(reason || "metadata-manager")
+        else if (typeof metadataPopupManager.audioPlayer.refreshMetadataDisplay === "function")
+            metadataPopupManager.audioPlayer.refreshMetadataDisplay({ triggerLyrics: false })
+        updateMetadataList()
+    }
+
     // Function to update metadata list
     function updateMetadataList() {
         if (metadataPopupManager.mainWindow.currentImage !== "") {
@@ -41,10 +51,7 @@ Item {
         id: metadataUpdateTimer
         interval: 500  // Increased to 500ms to allow audio duration to load
         onTriggered: {
-            if (metadataPopupManager.mainWindow.showingMetadata) {
-                metadataPopupManager.updateMetadataList()
-            } else {
-            }
+            metadataPopupManager.updateMetadataList()
         }
     }
     
@@ -129,22 +136,11 @@ Item {
             }
         }
         function onCurrentImageChanged() {
-            
-            // Update metadata when current image changes, if popup is visible
-            // Use a timer to debounce and ensure all properties are set (including duration and metadata)
-            if (metadataPopupManager.mainWindow.showingMetadata) {
-                // For audio files, don't use the timer - rely on signal-based updates (onDurationAvailable, onMetaDataChanged)
-                // This prevents interference with audio loading
-                if (metadataPopupManager.mainWindow.isAudio) {
-                    // Don't clear metadata list - keep old data until new data arrives to prevent UI glitches
-                    // The metadata will update when duration/metadata become available via Connections
-                    // This prevents interference with AudioPlayer's metadata display
-                } else {
-                    // For non-audio files, use a short delay
-                    metadataUpdateTimer.interval = 500
-                    metadataUpdateTimer.restart()
-                }
-            } else {
+            if (!metadataPopupManager.mainWindow.isAudio) {
+                metadataUpdateTimer.interval = 500
+                metadataUpdateTimer.restart()
+            } else if (metadataPopupManager.audioPlayer) {
+                metadataPopupManager.refreshAudioPlayerMetadata("track-changed")
             }
         }
     }
@@ -187,32 +183,14 @@ Item {
         // Only listen to onDurationAvailable (fires once when duration is known)
         // NOT onDurationChanged (fires continuously during playback)
         function onDurationAvailable() {
-            
-            // When duration becomes available, ensure cover art is extracted and metadata is refreshed
-            if (metadataPopupManager.mainWindow.isAudio &&
-                metadataPopupManager.audioPlayer &&
-                metadataPopupManager.audioPlayer.duration > 0) {
-                
-                // CRITICAL: When popup is open, explicitly trigger cover art extraction
-                // This ensures the AudioPlayer's UI updates even when popup is open
-                if (metadataPopupManager.mainWindow.showingMetadata) {
-                    const win = metadataPopupManager.mainWindow
-                    if (win && typeof win.extractAudioCoverArt === "function") {
-                        Qt.callLater(function() {
-                            if (win) win.extractAudioCoverArt()
-                        })
-                    }
-                }
-                
-                // Update metadata popup if it's visible
-                if (metadataPopupManager.mainWindow.showingMetadata) {
-                    Qt.callLater(function() {
-                        metadataPopupManager.updateMetadataList()
-                    })
-                } else {
-                }
-            } else {
+            if (!metadataPopupManager.mainWindow.isAudio
+                    || !metadataPopupManager.audioPlayer
+                    || metadataPopupManager.audioPlayer.duration <= 0) {
+                return
             }
+            Qt.callLater(function() {
+                metadataPopupManager.refreshAudioPlayerMetadata("duration-available")
+            })
         }
     }
     
@@ -229,19 +207,29 @@ Item {
         }
         
         function onMetaDataChanged() {
-            
-            if (metadataPopupManager.mainWindow.showingMetadata && 
-                metadataPopupManager.mainWindow.isAudio) {
-                // Update metadata when title/artist/cover art become available
-                // Use a small delay to ensure metadata is fully loaded
-                Qt.callLater(function() {
-                    metadataPopupManager.updateMetadataList()
-                })
-            } else {
-            }
+            if (!metadataPopupManager.mainWindow.isAudio)
+                return
+            Qt.callLater(function() {
+                metadataPopupManager.refreshAudioPlayerMetadata("player-metadata")
+            })
         }
         // NOTE: We do NOT listen to onDurationChanged here because it fires continuously
         // during playback. Duration is obtained from metadata directly via getMetadataList()
+    }
+
+    Connections {
+        target: (metadataPopupManager.audioPlayer && metadataPopupManager.audioPlayer.customPlayer)
+                ? metadataPopupManager.audioPlayer.customPlayer
+                : null
+        enabled: !!(metadataPopupManager.audioPlayer && metadataPopupManager.audioPlayer.customPlayer)
+
+        function onMetaDataChanged() {
+            if (!metadataPopupManager.mainWindow.isAudio)
+                return
+            Qt.callLater(function() {
+                metadataPopupManager.refreshAudioPlayerMetadata("custom-metadata")
+            })
+        }
     }
     
     // Log when audioPlayerLoader changes
@@ -255,159 +243,45 @@ Item {
         enabled: !!metadataPopupManager.audioPlayerLoader
         
         function onItemChanged() {
-            
-            // When audio player item changes, give it time to load metadata before updating
-            if (metadataPopupManager.mainWindow.showingMetadata && 
-                metadataPopupManager.mainWindow.isAudio) {
-                // CRITICAL: When popup is open and audio player loads, we need to ensure cover art and metadata refresh
-                // Use a timer to periodically check if duration is available and trigger updates
-                
-                // Set up a fallback mechanism: check periodically if duration is available
-                // This ensures updates happen even if onDurationAvailable signal doesn't fire
-                let checkCount = 0
-                const maxChecks = 20 // Check for up to 2 seconds (20 * 100ms)
-                const checkInterval = 100
-                
-                function checkAndUpdate() {
-                    checkCount++
-                    if (checkCount > maxChecks) {
-                        return
-                    }
-                    
-                    if (metadataPopupManager.audioPlayer && metadataPopupManager.audioPlayer.duration > 1000) {
-                        // Duration is available and seems valid (> 1 second)
-                        
-                        // Explicitly trigger cover art extraction
-                        const win = metadataPopupManager.mainWindow
-                        if (win && typeof win.extractAudioCoverArt === "function") {
-                            win.extractAudioCoverArt()
-                        } else {
-                        }
-                        
-                        // Trigger AudioPlayer metadata refresh
-                        
-                        if (metadataPopupManager.audioPlayer) {
-                            // First, explicitly call refreshMetadataDisplay to force UI update
-                            if (typeof metadataPopupManager.audioPlayer.refreshMetadataDisplay === "function") {
-                                metadataPopupManager.audioPlayer.refreshMetadataDisplay({ triggerLyrics: false })
-                            }
-                            
-                            // Then trigger the full metadata refresh
-                            if (typeof metadataPopupManager.audioPlayer.attemptMetadataRefresh === "function") {
-                                metadataPopupManager.audioPlayer.attemptMetadataRefresh("popup-open-fallback")
-                                
-                                // Force another refresh after a delay to ensure UI updates
-                                Qt.callLater(function() {
-                                    if (metadataPopupManager.audioPlayer && typeof metadataPopupManager.audioPlayer.refreshMetadataDisplay === "function") {
-                                        metadataPopupManager.audioPlayer.refreshMetadataDisplay({ triggerLyrics: false })
-                                    }
-                                }, 200)
-                            }
-                            
-                            // Check AudioPlayer properties after refresh
-                            Qt.callLater(function() {
-                                if (metadataPopupManager.audioPlayer) {
-                                    
-                                    // Check if refreshMetadataDisplay worked by checking metadataReady
-                                    
-                                    // Try to call getMetaString directly to see what it returns
-                                    if (typeof metadataPopupManager.audioPlayer.getMetaString === "function") {
-                                        const title = metadataPopupManager.audioPlayer.getMetaString(MediaMetaData.Title) || metadataPopupManager.audioPlayer.getMetaString("Title")
-                                        const artist = metadataPopupManager.audioPlayer.getMetaString(MediaMetaData.ContributingArtist) || metadataPopupManager.audioPlayer.getMetaString("ContributingArtist") || metadataPopupManager.audioPlayer.getMetaString("Artist")
-                                        
-                                        // If metadata is available, force another refresh
-                                        // Note: We don't change showingMetadata here - refreshMetadataDisplay() works even when UI is hidden
-                                        // The Text elements will be updated, and when popup closes, the UI will already be correct
-                                        if (title || artist) {
-                                            Qt.callLater(function() {
-                                                if (metadataPopupManager.audioPlayer && typeof metadataPopupManager.audioPlayer.refreshMetadataDisplay === "function") {
-                                                    metadataPopupManager.audioPlayer.refreshMetadataDisplay({ triggerLyrics: false })
-                                                }
-                                            }, 100)
-                                        }
-                                    } else {
-                                    }
-                                    
-                                    // Try to get title/artist from metadata
-                                    if (metadataPopupManager.audioPlayer.player) {
-                                        const metaData = metadataPopupManager.audioPlayer.player.metaData
-                                        if (metaData) {
-                                            try {
-                                                const title = metaData.stringValue ? metaData.stringValue(MediaMetaData.Title) : null
-                                                const artist = metaData.stringValue ? metaData.stringValue(MediaMetaData.ContributingArtist) : null
-                                            } catch(e) {
-                                            }
-                                        }
-                                    }
-                                    
-                                    // Also check customPlayer if it exists
-                                    if (metadataPopupManager.audioPlayer.customPlayer) {
-                                        if (metadataPopupManager.audioPlayer.customPlayer.metaData) {
-                                            const customMeta = metadataPopupManager.audioPlayer.customPlayer.metaData
-                                        }
-                                    }
-                                }
-                            }, 300)
-                        } else {
-                        }
-                        
-                        // Update metadata popup
-                        Qt.callLater(function() {
-                            metadataPopupManager.updateMetadataList()
-                        })
-                        
-                        // Stop checking once we've successfully updated
-                        return
-                    } else {
-                        // Duration not ready yet, check again
-                        Qt.callLater(function() {
-                            checkAndUpdate()
-                        }, checkInterval)
-                    }
+            if (!metadataPopupManager.mainWindow.isAudio)
+                return
+
+            // Poll until duration/metadata are ready (onDurationAvailable can miss if the player was already loaded).
+            let checkCount = 0
+            const maxChecks = 20
+            const checkInterval = 100
+
+            function checkAndUpdate() {
+                checkCount++
+                if (checkCount > maxChecks)
+                    return
+
+                const ap = metadataPopupManager.audioPlayer
+                if (ap && ap.duration > 1000) {
+                    metadataPopupManager.refreshAudioPlayerMetadata("audio-player-ready")
+                    return
                 }
-                
-                // Start checking after a short delay
-                Qt.callLater(function() {
-                    checkAndUpdate()
-                }, checkInterval)
-                
-                // Store timer reference to avoid creating multiple timers
-                if (!metadataPopupManager._playbackUpdateTimer) {
-                    metadataPopupManager._playbackUpdateTimer = Qt.createQmlObject(
-                        'import QtQuick; Timer { interval: 1000; repeat: true; running: false }', 
-                        metadataPopupManager
-                    )
-                    metadataPopupManager._playbackUpdateTimer.triggered.connect(function() {
-                        if (metadataPopupManager.audioPlayer) {
-                        }
-                        
-                        if (metadataPopupManager.mainWindow.showingMetadata && 
-                            metadataPopupManager.mainWindow.isAudio &&
-                            metadataPopupManager.audioPlayer &&
-                            metadataPopupManager.audioPlayer.duration > 0) {
-                            // Update metadata list during playback to keep duration/time current
-                            metadataPopupManager.updateMetadataList()
-                        } else {
-                            // Stop timer if popup is closed or not audio
-                            metadataPopupManager._playbackUpdateTimer.stop()
-                        }
-                    })
-                }
-                
-                // Start the timer after a delay to let everything initialize
-                Qt.callLater(function() {
-                    if (metadataPopupManager.mainWindow.showingMetadata && 
-                        metadataPopupManager.mainWindow.isAudio &&
-                        metadataPopupManager.audioPlayer) {
-                        metadataPopupManager._playbackUpdateTimer.start()
-                    }
-                }, 500)
-            } else {
+                Qt.callLater(checkAndUpdate, checkInterval)
             }
-            
-            // Force re-evaluation of audioPlayer property by triggering a change
-            Qt.callLater(function() {
-            })
+
+            Qt.callLater(checkAndUpdate, checkInterval)
+
+            if (!metadataPopupManager._playbackUpdateTimer) {
+                metadataPopupManager._playbackUpdateTimer = Qt.createQmlObject(
+                    'import QtQuick; Timer { interval: 1000; repeat: true; running: false }',
+                    metadataPopupManager
+                )
+                metadataPopupManager._playbackUpdateTimer.triggered.connect(function() {
+                    if (metadataPopupManager.mainWindow.showingMetadata
+                            && metadataPopupManager.mainWindow.isAudio
+                            && metadataPopupManager.audioPlayer
+                            && metadataPopupManager.audioPlayer.duration > 0) {
+                        metadataPopupManager.updateMetadataList()
+                    } else {
+                        metadataPopupManager._playbackUpdateTimer.stop()
+                    }
+                })
+            }
         }
     }
     
@@ -439,15 +313,15 @@ Item {
             }
         }
         
-        property bool closingViaButton: false
-        
         onCloseRequested: {
             // Close the popup by setting showingMetadata to false
             // This ensures it only closes on release, not on press
-            closingViaButton = true
-            metadataPopupManager.mainWindow.showingMetadata = false
+            const w = metadataPopupManager.mainWindow
+            w._metadataClosingViaButton = true
+            w.showingMetadata = false
             Qt.callLater(function() {
-                closingViaButton = false
+                if (w)
+                    w._metadataClosingViaButton = false
             })
         }
         
@@ -470,7 +344,7 @@ Item {
             } else {
                 // Only set showingMetadata to false if we're not closing via the button
                 // This prevents the popup from reopening when the button is released
-                if (!closingViaButton) {
+                if (!metadataPopupManager.mainWindow._metadataClosingViaButton) {
                     metadataPopupManager.mainWindow.showingMetadata = false
                 }
             }

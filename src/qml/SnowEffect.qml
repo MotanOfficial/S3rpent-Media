@@ -4,7 +4,6 @@ import QtQuick
 Item {
     id: snowEffect
     
-    property bool enabled: true
     property real effectOpacity: 0.9
     property color snowColor: "white"
     

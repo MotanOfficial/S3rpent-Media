@@ -4,16 +4,23 @@
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QElapsedTimer>
-#include <QThread>
 #include <QMutex>
-#include <QWaitCondition>
 #include <QVariant>
 #include <QVariantList>
 #include <QMediaDevices>
 #include <QSettings>
 #include <QMediaMetaData>
 #include <QAudioOutput>
+#include <QTimer>
 #include <cstring>
+
+namespace {
+bool isNetworkHttpUrl(const QUrl &u)
+{
+    const QString s = u.scheme().toLower();
+    return s == QLatin1String("http") || s == QLatin1String("https");
+}
+} // namespace
 
 CustomAudioPlayer::CustomAudioPlayer(QObject *parent)
     : QObject(parent)
@@ -36,8 +43,6 @@ CustomAudioPlayer::CustomAudioPlayer(QObject *parent)
     , m_positionTimer(nullptr)
     , m_errorCheckTimer(nullptr)
     , m_formatInitialized(false)
-    , m_processingThread(nullptr)
-    , m_processingActive(false)
     , m_writeTimer(nullptr)
     , m_audioVisualizer(nullptr)
     , m_cleaningUp(false)
@@ -69,9 +74,13 @@ CustomAudioPlayer::CustomAudioPlayer(QObject *parent)
     
     // Timer for non-blocking audio writes (prevents UI lag)
     m_writeTimer = new QTimer(this);
-    m_writeTimer->setInterval(5);  // Write chunks every 5ms - faster to keep up with decoding
+    m_writeTimer->setInterval(10);  // Balance latency vs main-thread load
     m_writeTimer->setSingleShot(false);
     connect(m_writeTimer, &QTimer::timeout, this, &CustomAudioPlayer::writeChunkToDevice);
+
+    // Create metadata player early so the first setSource() does not pay Qt Multimedia cold-start
+    // (WMF/plugin load) on the same path as decoder setup.
+    ensureMetadataPlayer();
 }
 
 CustomAudioPlayer::~CustomAudioPlayer()
@@ -99,26 +108,8 @@ void CustomAudioPlayer::setSource(const QUrl &source)
         stop();
     }
     
-    // Stop and disconnect metadata player before cleanup to prevent race conditions
     if (m_metadataPlayer) {
-        // CRITICAL: Check if pointer is valid by checking if it's a valid QObject
-        // This prevents crashes from accessing invalid memory
-        QObject *obj = qobject_cast<QObject*>(m_metadataPlayer);
-        if (!obj) {
-            m_metadataPlayer = nullptr;
-        } else {
-            // Save pointer and clear member immediately to prevent re-entry
-            QMediaPlayer *metadataPlayer = m_metadataPlayer;
-            m_metadataPlayer = nullptr;  // Clear pointer first to prevent re-entry
-            
-            // Stop first - this is safer than disconnect
-            metadataPlayer->stop();
-            
-            // Disconnect from our side - disconnect all signals from metadataPlayer to this
-            QObject::disconnect(metadataPlayer, nullptr, this, nullptr);
-            
-            delete metadataPlayer;
-        }
+        m_metadataPlayer->stop();
     }
     
     cleanupAudioPipeline();  // Ensure audio sink is fully released
@@ -237,10 +228,10 @@ void CustomAudioPlayer::play()
     if (m_source.isEmpty())
         return;
 
-    // CRITICAL: Ensure decoder exists - if not, setup pipeline first
-    if (!m_decoder) {
+    // Ensure decode pipeline exists
+    if (!m_decoder && !m_ffmpegActive) {
         setupAudioPipeline();
-        if (!m_decoder) {
+        if (!m_decoder && !m_ffmpegActive) {
             return;
         }
     }
@@ -252,12 +243,28 @@ void CustomAudioPlayer::play()
         m_basePosition = m_position;
         m_playbackStartTime.restart();  // Restart elapsed timer from current position
         m_positionTimer->start();
-        // No feed timer needed - QAudioSink reads directly from processor
+        if (m_writeTimer && m_formatInitialized && m_audioDevice && m_audioDevice->isOpen()) {
+            m_writeTimer->start();
+        }
+#ifdef HAS_FFMPEG_LIBS
+        if (m_ffmpegActive && m_ffmpegPumpTimer) {
+            m_ffmpegPumpTimer->start();
+        }
+#endif
         updatePlaybackState(PlayingState);
         return;
     }
 
     if (m_playbackState == StoppedState) {
+#ifdef HAS_FFMPEG_LIBS
+        if (m_ffmpegActive) {
+            const qint64 startPos = qBound(0LL, m_position, m_duration > 0 ? m_duration : m_position);
+            m_seekPreserveState = PlayingState;
+            seekFfmpegLocal(startPos);
+            return;
+        }
+#endif
+
         // Start from beginning (or restart if at end)
         m_position = 0;
         m_basePosition = 0;  // Reset base position
@@ -266,11 +273,6 @@ void CustomAudioPlayer::play()
         m_seekTargetPosition = 0;  // Clear any seek target
         emit positionChanged();
         
-        // Clear any pending data
-        {
-            QMutexLocker locker(&m_bufferMutex);
-            m_pendingBuffers.clear();
-        }
         {
             QMutexLocker locker(&m_writeMutex);
             m_pendingWrites.clear();
@@ -282,13 +284,7 @@ void CustomAudioPlayer::play()
             // Stop decoder if it's running
             m_decoder->stop();
             
-            // Reset decoder source to restart from beginning
-            if (m_source.isLocalFile()) {
-                QString filePath = m_source.toLocalFile();
-                m_decoder->setSource(filePath);
-            }
-            
-            // Start decoder
+            rebindDecoderSource();
             m_decoder->start();
         }
         
@@ -317,7 +313,14 @@ void CustomAudioPlayer::pause()
         m_audioSink->suspend();
     }
     m_positionTimer->stop();
-           // No feed timer needed - QAudioSink reads directly from processor
+    if (m_writeTimer) {
+        m_writeTimer->stop();
+    }
+#ifdef HAS_FFMPEG_LIBS
+    if (m_ffmpegPumpTimer) {
+        m_ffmpegPumpTimer->stop();
+    }
+#endif
     updatePlaybackState(PausedState);
 }
 
@@ -330,6 +333,11 @@ void CustomAudioPlayer::stop()
     if (m_decoder) {
         m_decoder->stop();
     }
+#ifdef HAS_FFMPEG_LIBS
+    if (m_ffmpegPumpTimer) {
+        m_ffmpegPumpTimer->stop();
+    }
+#endif
     if (m_audioSink) {
         m_audioSink->stop();
         m_audioSink->suspend();  // Ensure it's fully stopped
@@ -348,7 +356,20 @@ void CustomAudioPlayer::stop()
 
 void CustomAudioPlayer::seek(qint64 position)
 {
-    if (!m_seekable || !m_decoder) {
+    if (!m_seekable || m_duration <= 0) {
+        return;
+    }
+
+#ifdef HAS_FFMPEG_LIBS
+    if (m_ffmpegActive) {
+        m_seekPreserveState = m_playbackState;
+        const qint64 targetPosition = qBound(0LL, position, m_duration);
+        seekFfmpegLocal(targetPosition);
+        return;
+    }
+#endif
+
+    if (!m_decoder) {
         return;
     }
     
@@ -386,11 +407,6 @@ void CustomAudioPlayer::seek(qint64 position)
         m_audioDevice = nullptr;  // Clear device so we know to restart it
     }
     
-    // Clear all pending buffers
-    {
-        QMutexLocker locker(&m_bufferMutex);
-        m_pendingBuffers.clear();
-    }
     {
         QMutexLocker locker(&m_writeMutex);
         m_pendingWrites.clear();
@@ -405,9 +421,8 @@ void CustomAudioPlayer::seek(qint64 position)
     // This prevents duration recalculation
     
     // Restart decoder from beginning (QAudioDecoder doesn't support seeking, so we decode from start and skip)
-    if (m_decoder && m_source.isLocalFile()) {
-        QString filePath = m_source.toLocalFile();
-        m_decoder->setSource(filePath);
+    if (m_decoder) {
+        rebindDecoderSource();
         m_decoder->start();
     }
     
@@ -490,13 +505,10 @@ void CustomAudioPlayer::onBufferReady()
         m_formatInitialized = true;
         m_seekable = true;
         emit seekableChanged();
-        
-        // Start position timer now that we have audio
-        // Don't start position timer here - it will start when first bytes are written
-        // This ensures position tracking starts when audio actually begins playing
-        
-        // Start processing thread - move processor to thread for processing
-        startProcessingThread();
+
+        if (m_playbackState == StoppedState && m_audioSink) {
+            m_audioSink->suspend();
+        }
     }
 
     // Track total frames decoded for accurate duration calculation
@@ -585,12 +597,27 @@ void CustomAudioPlayer::onBufferReady()
         }
     }
 
-    // CRITICAL: Process buffer in background thread to prevent UI lag
-    // Add buffer to queue for processing thread (only if not seeking or we've reached seek position)
+    if (m_playbackState == StoppedState) {
+        if (m_formatInitialized && m_seekTargetPosition == 0 && m_decoder) {
+            m_decoder->stop();
+        }
+        return;
+    }
+
+    if (m_playbackState != PlayingState && m_playbackState != PausedState) {
+        return;
+    }
+
+    if (!m_audioDevice || !m_audioDevice->isOpen()) {
+        return;
+    }
+
     {
-        QMutexLocker locker(&m_bufferMutex);
-        m_pendingBuffers.append(buffer);
-        m_bufferReady.wakeOne();
+        QMutexLocker locker(&m_writeMutex);
+        m_pendingWrites.append(buffer);
+    }
+    if (m_playbackState == PlayingState && m_writeTimer && !m_writeTimer->isActive()) {
+        m_writeTimer->start();
     }
 }
 
@@ -618,14 +645,6 @@ void CustomAudioPlayer::onFinished()
     
     // Don't stop immediately - check if there are pending buffers or writes
     // The decoder finishing just means it's done decoding, not that playback is done
-    
-    // Check if there are still buffers being processed
-    {
-        QMutexLocker locker(&m_bufferMutex);
-        if (!m_pendingBuffers.isEmpty()) {
-            return;  // Still processing
-        }
-    }
     
     // Check if there are still writes pending
     {
@@ -720,7 +739,141 @@ void CustomAudioPlayer::onMetaDataChanged()
         m_metaData["AudioCodec"] = codec;
     }
     
+    // Duration from tags / container (often arrives with the first metadata batch, before durationChanged)
+    {
+        qint64 d = 0;
+        const QVariant durVar = metaData.value(QMediaMetaData::Duration);
+        if (durVar.isValid()) {
+            d = durVar.toLongLong();
+        }
+        if (d <= 0 && m_metadataPlayer->duration() > 0) {
+            d = m_metadataPlayer->duration();
+        }
+        if (d > 0) {
+            applyDurationMs(d);
+        }
+    }
+
     emit metaDataChanged();
+}
+
+bool CustomAudioPlayer::applyDurationMs(qint64 ms)
+{
+    if (ms <= 0) {
+        return false;
+    }
+    {
+        QMutexLocker locker(&m_cleanupMutex);
+        if (m_cleaningUp) {
+            return false;
+        }
+    }
+    if (!m_metadataPlayer) {
+        return false;
+    }
+    if (m_metadataPlayer->source() != m_source) {
+        return false;
+    }
+    if (m_durationCalculated && m_duration == ms) {
+        return false;
+    }
+    m_duration = ms;
+    m_durationCalculated = true;
+    emit durationChanged();
+    return true;
+}
+
+void CustomAudioPlayer::onMetadataDurationChanged(qint64 durationMs)
+{
+    applyDurationMs(durationMs);
+}
+
+void CustomAudioPlayer::onMetadataMediaStatusChanged(QMediaPlayer::MediaStatus status)
+{
+    Q_UNUSED(status);
+    if (!m_metadataPlayer) {
+        return;
+    }
+    {
+        QMutexLocker locker(&m_cleanupMutex);
+        if (m_cleaningUp) {
+            return;
+        }
+    }
+    if (m_metadataPlayer->source() != m_source) {
+        return;
+    }
+    const qint64 d = m_metadataPlayer->duration();
+    if (d > 0) {
+        applyDurationMs(d);
+    }
+}
+
+void CustomAudioPlayer::ensureMetadataPlayer()
+{
+    if (m_metadataPlayer) {
+        return;
+    }
+    m_metadataPlayer = new QMediaPlayer(this);
+    QAudioOutput *audioOutput = new QAudioOutput(this);
+    audioOutput->setVolume(0);
+    m_metadataPlayer->setAudioOutput(audioOutput);
+    connect(m_metadataPlayer, &QMediaPlayer::metaDataChanged, this, &CustomAudioPlayer::onMetaDataChanged, Qt::UniqueConnection);
+    connect(m_metadataPlayer, &QMediaPlayer::durationChanged, this, &CustomAudioPlayer::onMetadataDurationChanged, Qt::UniqueConnection);
+    connect(m_metadataPlayer, &QMediaPlayer::mediaStatusChanged, this, &CustomAudioPlayer::onMetadataMediaStatusChanged, Qt::UniqueConnection);
+}
+
+void CustomAudioPlayer::scheduleMetadataLoad(const QString &localFilePath)
+{
+    const QUrl wanted = QUrl::fromLocalFile(localFilePath);
+    QTimer::singleShot(0, this, [this, wanted]() {
+        {
+            QMutexLocker locker(&m_cleanupMutex);
+            if (m_cleaningUp) {
+                return;
+            }
+        }
+        if (m_source != wanted) {
+            return;
+        }
+        ensureMetadataPlayer();
+        m_metadataPlayer->stop();
+        m_metadataPlayer->setSource(wanted);
+    });
+}
+
+void CustomAudioPlayer::scheduleMetadataLoadUrl(const QUrl &url)
+{
+    if (!url.isValid())
+        return;
+    const QUrl wanted = url;
+    QTimer::singleShot(0, this, [this, wanted]() {
+        {
+            QMutexLocker locker(&m_cleanupMutex);
+            if (m_cleaningUp) {
+                return;
+            }
+        }
+        if (m_source != wanted) {
+            return;
+        }
+        ensureMetadataPlayer();
+        m_metadataPlayer->stop();
+        m_metadataPlayer->setSource(wanted);
+    });
+}
+
+void CustomAudioPlayer::rebindDecoderSource()
+{
+    if (!m_decoder || m_source.isEmpty())
+        return;
+    if (m_source.isLocalFile()) {
+        if (!QFileInfo::exists(m_source.toLocalFile()))
+            return;
+    } else if (!isNetworkHttpUrl(m_source)) {
+        return;
+    }
+    m_decoder->setSource(m_source);
 }
 
 void CustomAudioPlayer::setAudioVisualizer(QObject* visualizer)
@@ -770,11 +923,6 @@ void CustomAudioPlayer::updatePosition()
                     m_seekTargetPosition = 0;
                     emit positionChanged();
                     
-                    // Clear pending data
-                    {
-                        QMutexLocker locker(&m_bufferMutex);
-                        m_pendingBuffers.clear();
-                    }
                     {
                         QMutexLocker locker(&m_writeMutex);
                         m_pendingWrites.clear();
@@ -784,10 +932,7 @@ void CustomAudioPlayer::updatePosition()
                     // Restart decoder
                     if (m_decoder) {
                         m_decoder->stop();
-                        if (m_source.isLocalFile()) {
-                            QString filePath = m_source.toLocalFile();
-                            m_decoder->setSource(filePath);
-                        }
+                        rebindDecoderSource();
                         m_decoder->start();
                     }
                     
@@ -858,11 +1003,6 @@ void CustomAudioPlayer::updatePosition()
                         m_seekTargetPosition = 0;
                         emit positionChanged();
                         
-                        // Clear pending data
-                        {
-                            QMutexLocker locker(&m_bufferMutex);
-                            m_pendingBuffers.clear();
-                        }
                         {
                             QMutexLocker locker(&m_writeMutex);
                             m_pendingWrites.clear();
@@ -872,10 +1012,7 @@ void CustomAudioPlayer::updatePosition()
                         // Restart decoder
                         if (m_decoder) {
                             m_decoder->stop();
-                            if (m_source.isLocalFile()) {
-                                QString filePath = m_source.toLocalFile();
-                                m_decoder->setSource(filePath);
-                            }
+                            rebindDecoderSource();
                             m_decoder->start();
                         }
                         
@@ -922,51 +1059,47 @@ void CustomAudioPlayer::updatePosition()
 
 void CustomAudioPlayer::setupAudioPipeline()
 {
-    // CRITICAL: Prevent duplicate setup - if decoder already exists, cleanup first
-    if (m_decoder) {
+    // Prevent duplicate setup
+    if (m_decoder || m_ffmpegActive) {
         cleanupAudioPipeline();
     }
 
     if (m_source.isEmpty())
         return;
 
-    QString filePath;
+#ifdef HAS_FFMPEG_LIBS
     if (m_source.isLocalFile()) {
-        filePath = m_source.toLocalFile();
-    } else {
-        return;
-    }
+        if (initFfmpegLocalDecoder(m_source.toLocalFile())) {
+            if (!m_processor) {
+                m_processor = new CustomAudioProcessor(this);
+                QSettings settings;
+                m_processor->setEnabled(settings.value("audio/eqEnabled", false).toBool());
+            } else {
+                QSettings settings;
+                m_processor->setEnabled(settings.value("audio/eqEnabled", false).toBool());
+            }
 
-    if (!QFileInfo::exists(filePath)) {
-        return;
-    }
+            if (!m_ffmpegPumpTimer) {
+                m_ffmpegPumpTimer = new QTimer(this);
+                m_ffmpegPumpTimer->setInterval(5);
+                connect(m_ffmpegPumpTimer, &QTimer::timeout, this, &CustomAudioPlayer::pumpFfmpegAudio);
+            }
 
-    // Create metadata player for extracting metadata (title, artist, etc.)
-    if (!m_metadataPlayer) {
-        m_metadataPlayer = new QMediaPlayer(this);
-        QAudioOutput *audioOutput = new QAudioOutput(this);
-        audioOutput->setVolume(0);  // Mute it - we only want metadata
-        m_metadataPlayer->setAudioOutput(audioOutput);
+            scheduleMetadataLoad(m_source.toLocalFile());
+            return;
+        }
     }
-    
-    // Reconnect signal (in case it was disconnected during cleanup)
-    connect(m_metadataPlayer, &QMediaPlayer::metaDataChanged, this, &CustomAudioPlayer::onMetaDataChanged, Qt::UniqueConnection);
-    
-    // Stop any previous metadata extraction before loading new source
-    m_metadataPlayer->stop();
-    
-    // Load metadata from file
-    m_metadataPlayer->setSource(QUrl::fromLocalFile(filePath));
-    // Metadata will be extracted asynchronously
-    
-    // Create decoder - always create new one to avoid race conditions
-    // (cleanupAudioPipeline() deletes the old one, so this should always be null here)
-    if (m_decoder) {
-        cleanupAudioPipeline();
-    }
-    
+#endif
+
     m_decoder = new QAudioDecoder(this);
-    m_decoder->setSource(filePath);
+    if (m_source.isLocalFile()) {
+        if (!QFileInfo::exists(m_source.toLocalFile()))
+            return;
+    } else if (!isNetworkHttpUrl(m_source)) {
+        return;
+    }
+
+    m_decoder->setSource(m_source);
 
     connect(m_decoder, &QAudioDecoder::bufferReady, this, &CustomAudioPlayer::onBufferReady);
     connect(m_decoder, &QAudioDecoder::finished, this, &CustomAudioPlayer::onFinished);
@@ -991,6 +1124,13 @@ void CustomAudioPlayer::setupAudioPipeline()
     }
 
     m_formatInitialized = false;
+
+    if (m_source.isLocalFile())
+        scheduleMetadataLoad(m_source.toLocalFile());
+    else
+        scheduleMetadataLoadUrl(m_source);
+
+    m_decoder->start();
 }
 
 void CustomAudioPlayer::cleanupAudioPipeline()
@@ -1000,9 +1140,6 @@ void CustomAudioPlayer::cleanupAudioPipeline()
         QMutexLocker locker(&m_cleanupMutex);
         m_cleaningUp = true;
     }
-    
-    // Stop processing thread first - must be done before deleting objects it might access
-    stopProcessingThread();
     
     // Stop error check timer to prevent it from accessing deleted decoder
     if (m_errorCheckTimer) {
@@ -1046,12 +1183,6 @@ void CustomAudioPlayer::cleanupAudioPipeline()
         m_writeTimer->stop();
     }
     
-    // Clear pending buffers
-    {
-        QMutexLocker locker(&m_bufferMutex);
-        m_pendingBuffers.clear();
-    }
-    
     // Clear pending writes and partial data
     {
         QMutexLocker locker(&m_writeMutex);
@@ -1059,6 +1190,10 @@ void CustomAudioPlayer::cleanupAudioPipeline()
     }
     m_partialProcessedData.clear();
     
+#ifdef HAS_FFMPEG_LIBS
+    shutdownFfmpegLocalDecoder();
+#endif
+
     // Clear cleanup flag
     {
         QMutexLocker locker(&m_cleanupMutex);
@@ -1071,112 +1206,6 @@ void CustomAudioPlayer::updatePlaybackState(PlaybackState state)
     if (m_playbackState != state) {
         m_playbackState = state;
         emit playbackStateChanged();
-    }
-}
-
-void CustomAudioPlayer::startProcessingThread()
-{
-    if (m_processingThread || !m_formatInitialized || !m_processor) {
-        return;
-    }
-    
-    m_processingActive = true;
-    m_processingThread = new QThread(this);
-    
-    // Create a worker object that will live in the worker thread
-    QObject *worker = new QObject();
-    worker->moveToThread(m_processingThread);
-    
-    // Use QTimer::singleShot to run processing in the worker thread's event loop
-    connect(m_processingThread, &QThread::started, worker, [this, worker]() {
-        // This lambda runs in the worker thread context (worker is in the worker thread)
-        QTimer::singleShot(0, worker, [this, worker]() {
-            processBuffersInThread();
-        });
-    });
-    connect(m_processingThread, &QThread::finished, worker, &QObject::deleteLater);
-    connect(m_processingThread, &QThread::finished, m_processingThread, &QThread::deleteLater);
-    
-    m_processingThread->start();
-}
-
-void CustomAudioPlayer::stopProcessingThread()
-{
-    if (!m_processingThread) {
-        return;
-    }
-    
-    m_processingActive = false;
-    m_bufferReady.wakeAll();  // Wake thread so it can exit
-    
-    m_processingThread->quit();
-    if (!m_processingThread->wait(2000)) {  // Wait up to 2 seconds for thread to finish
-        m_processingThread->terminate();
-        m_processingThread->wait(1000);  // Wait for termination
-    }
-    
-    m_processingThread = nullptr;
-}
-
-void CustomAudioPlayer::processBuffersInThread()
-{
-    // This runs in the processing thread
-    while (m_processingActive) {
-        QAudioBuffer buffer;
-        
-        // Get next buffer from queue
-        {
-            QMutexLocker locker(&m_bufferMutex);
-            while (m_pendingBuffers.isEmpty() && m_processingActive) {
-                m_bufferReady.wait(&m_bufferMutex, 100);  // Wait up to 100ms
-            }
-            
-            if (!m_pendingBuffers.isEmpty()) {
-                buffer = m_pendingBuffers.takeFirst();
-            }
-        }
-        
-        if (!buffer.isValid()) {
-            continue;
-        }
-        
-        // For real-time EQ: Send raw buffer to main thread for processing with current EQ settings
-        // This ensures EQ changes apply immediately to the next buffers
-        QMetaObject::invokeMethod(this, "processAndQueueBuffer", Qt::QueuedConnection, 
-                                  Q_ARG(QAudioBuffer, buffer));
-    }
-}
-
-void CustomAudioPlayer::processAndQueueBuffer(const QAudioBuffer &rawBuffer)
-{
-    // CRITICAL: Check if we're cleaning up - don't process during cleanup
-    {
-        QMutexLocker locker(&m_cleanupMutex);
-        if (m_cleaningUp) {
-            return;
-        }
-    }
-    
-    if (!rawBuffer.isValid()) {
-        return;
-    }
-    
-    // CRITICAL: Store RAW buffers for real-time EQ processing
-    // Buffers will be processed right before writing with CURRENT EQ settings
-    // This ensures EQ changes apply immediately to the next buffers to be written
-    if (!m_audioDevice || !m_audioDevice->isOpen()) {
-        return;
-    }
-    
-    // Add raw buffer to write queue - will be processed on-demand
-    {
-        QMutexLocker locker(&m_writeMutex);
-        m_pendingWrites.append(rawBuffer);
-    }
-    
-    // Start write timer if not already running (writes chunks periodically without blocking)
-    if (m_writeTimer && !m_writeTimer->isActive()) {
-        m_writeTimer->start();
     }
 }
 
@@ -1200,6 +1229,13 @@ void CustomAudioPlayer::writeChunkToDevice()
         }
         return;
     }
+
+    if (m_playbackState != PlayingState) {
+        if (m_writeTimer && m_pendingWrites.isEmpty() && m_partialProcessedData.isEmpty()) {
+            m_writeTimer->stop();
+        }
+        return;
+    }
     
     // Check how much space is available in the audio device buffer
     qint64 bytesFree = m_audioSink->bytesFree();
@@ -1214,51 +1250,30 @@ void CustomAudioPlayer::writeChunkToDevice()
     
     // First, write any partial processed data from previous write
     if (!m_partialProcessedData.isEmpty()) {
-        qint64 partialSize = qMin(static_cast<qint64>(m_partialProcessedData.size()), bytesToWrite);
-        qint64 written = m_audioDevice->write(m_partialProcessedData.constData(), partialSize);
-        if (written > 0) {
-            m_bytesWritten += written;
-            // Start position timer on first write if not already started
-            if (!m_playbackStartTime.isValid()) {
-                m_basePosition = m_position;  // Set base position to current position
-                m_playbackStartTime.start();
-                if (m_positionTimer && !m_positionTimer->isActive()) {
-                    m_positionTimer->start();
-                }
-            }
-            
-            // Feed audio samples to visualizer if available (avoids WASAPI loopback capturing all system audio)
-            if (m_audioVisualizer && m_audioFormat.isValid()) {
-                QByteArray sampleData = m_partialProcessedData.left(written);
-                // Use direct call instead of QMetaObject::invokeMethod to avoid QAudioFormat metatype issues
-                AudioVisualizer *visualizer = qobject_cast<AudioVisualizer*>(m_audioVisualizer);
-                if (visualizer) {
-                    visualizer->feedAudioSamples(sampleData, m_audioFormat);
-                }
-            }
-        }
-        
+        const qint64 partialSize = qMin(static_cast<qint64>(m_partialProcessedData.size()), bytesToWrite);
+        const qint64 written = m_audioDevice->write(m_partialProcessedData.constData(), partialSize);
         if (written < 0) {
             m_partialProcessedData.clear();
             return;
         }
-        
         if (written > 0) {
-            m_bytesWritten += written;  // Track bytes written for accurate position
-            // Start position timer on first write if not already started
+            m_bytesWritten += written;
             if (!m_playbackStartTime.isValid()) {
-                m_basePosition = m_position;  // Set base position to current position
+                m_basePosition = m_position;
                 m_playbackStartTime.start();
                 if (m_positionTimer && !m_positionTimer->isActive()) {
                     m_positionTimer->start();
                 }
             }
-            // Remove written bytes from partial buffer
-            m_partialProcessedData.remove(0, written);
+            if (m_audioVisualizer && m_audioFormat.isValid()) {
+                const QByteArray sampleData = m_partialProcessedData.left(static_cast<int>(written));
+                if (AudioVisualizer *visualizer = qobject_cast<AudioVisualizer *>(m_audioVisualizer)) {
+                    visualizer->feedAudioSamples(sampleData, m_audioFormat);
+                }
+            }
+            m_partialProcessedData.remove(0, static_cast<int>(written));
             bytesToWrite -= written;
         }
-        
-        // If we still have partial data, wait for next tick
         if (!m_partialProcessedData.isEmpty()) {
             return;
         }

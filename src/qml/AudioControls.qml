@@ -43,12 +43,15 @@ Item {
 
     signal playClicked()
     signal pauseClicked()
+    signal previousClicked()
+    signal nextClicked()
     signal seekRequested(real position)
     signal seekReleased()  // Emitted when user releases the progress bar
     signal volumeAdjusted(real volume)
     signal muteToggled(bool muted)
     signal loopClicked()
     signal moreClicked()
+    signal queueClicked()
     signal pitchAdjusted(real pitch)
     signal tempoAdjusted(real tempo)
     signal eqBandChanged(int band, real value)
@@ -103,7 +106,7 @@ Item {
             horizontalOffset: 0
         }
 
-            // Main controls row: [Play/Pause] [Volume] [Progress Bar] [Loop] [More]
+            // Main controls row: [Prev] [Play/Pause] [Next] [Volume] [Progress Bar] [Loop] [Queue] [More]
             RowLayout {
             id: controlsRowLayout
             anchors.left: parent.left
@@ -117,6 +120,61 @@ Item {
                 spacing: 8
             z: 1
             clip: false  // Don't clip tooltips
+
+                // LEFT SIDE: Previous
+                Item {
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 36
+                    Layout.alignment: Qt.AlignVCenter
+
+                    Rectangle {
+                        id: prevButton
+                        anchors.fill: parent
+                        radius: 8
+                        property bool isHovered: false
+                        property bool isPressed: false
+
+                        color: isPressed ? pressedButtonColor : (isHovered ? hoverButtonColor : "transparent")
+                        Behavior on color { ColorAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                        Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                        scale: isPressed ? 0.9 : (isHovered ? 1.05 : 1.0)
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: ""
+                            visible: false
+                        }
+
+                        Image {
+                            id: prevIcon
+                            anchors.centerIn: parent
+                            width: 18
+                            height: 18
+                            source: "qrc:/qlementine/icons/16/navigation/chevron-left.svg"
+                            sourceSize: Qt.size(18, 18)
+                            visible: false
+                        }
+                        ColorOverlay {
+                            anchors.fill: prevIcon
+                            source: prevIcon
+                            color: iconColor
+                            opacity: 0.9
+                        }
+
+                        TapHandler {
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            acceptedButtons: Qt.LeftButton
+                            onTapped: previousClicked()
+                            onPressedChanged: prevButton.isPressed = pressed
+                        }
+
+                        HoverHandler {
+                            cursorShape: Qt.PointingHandCursor
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            onHoveredChanged: prevButton.isHovered = hovered
+                        }
+                    }
+                }
 
                 // LEFT SIDE: Play/Pause icon
                 Item {
@@ -180,6 +238,61 @@ Item {
                             cursorShape: Qt.PointingHandCursor
                             acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                             onHoveredChanged: playPauseButton.isHovered = hovered
+                        }
+                    }
+                }
+
+                // LEFT SIDE: Next
+                Item {
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 36
+                    Layout.alignment: Qt.AlignVCenter
+
+                    Rectangle {
+                        id: nextButton
+                        anchors.fill: parent
+                        radius: 8
+                        property bool isHovered: false
+                        property bool isPressed: false
+
+                        color: isPressed ? pressedButtonColor : (isHovered ? hoverButtonColor : "transparent")
+                        Behavior on color { ColorAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                        Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                        scale: isPressed ? 0.9 : (isHovered ? 1.05 : 1.0)
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: ""
+                            visible: false
+                        }
+
+                        Image {
+                            id: nextIcon
+                            anchors.centerIn: parent
+                            width: 18
+                            height: 18
+                            source: "qrc:/qlementine/icons/16/navigation/chevron-right.svg"
+                            sourceSize: Qt.size(18, 18)
+                            visible: false
+                        }
+                        ColorOverlay {
+                            anchors.fill: nextIcon
+                            source: nextIcon
+                            color: iconColor
+                            opacity: 0.9
+                        }
+
+                        TapHandler {
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            acceptedButtons: Qt.LeftButton
+                            onTapped: nextClicked()
+                            onPressedChanged: nextButton.isPressed = pressed
+                        }
+
+                        HoverHandler {
+                            cursorShape: Qt.PointingHandCursor
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            onHoveredChanged: nextButton.isHovered = hovered
                         }
                     }
                 }
@@ -573,6 +686,62 @@ Item {
                     }
                 }
 
+                // RIGHT SIDE: Queue icon
+                Item {
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 36
+                    Layout.alignment: Qt.AlignVCenter
+
+                    Rectangle {
+                        id: queueIconButton
+                        anchors.fill: parent
+                        radius: 8
+                        property bool isHovered: false
+                        property bool isPressed: false
+
+                        color: isPressed ? pressedButtonColor : (isHovered ? hoverButtonColor : "transparent")
+                        Behavior on color { ColorAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                        Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                        scale: isPressed ? 0.9 : (isHovered ? 1.05 : 1.0)
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: ""
+                            visible: false
+                        }
+
+                        Image {
+                            id: queueIcon
+                            anchors.centerIn: parent
+                            width: 18
+                            height: 18
+                            // Closest available “list” style icon in current set
+                            source: "qrc:/qlementine/icons/16/navigation/chevron-down.svg"
+                            sourceSize: Qt.size(18, 18)
+                            visible: false
+                        }
+                        ColorOverlay {
+                            anchors.fill: queueIcon
+                            source: queueIcon
+                            color: iconColor
+                            opacity: 0.9
+                        }
+
+                        TapHandler {
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            acceptedButtons: Qt.LeftButton
+                            onTapped: queueClicked()
+                            onPressedChanged: queueIconButton.isPressed = pressed
+                        }
+
+                        HoverHandler {
+                            cursorShape: Qt.PointingHandCursor
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            onHoveredChanged: queueIconButton.isHovered = hovered
+                        }
+                    }
+                }
+
                 // RIGHT SIDE: More icon (three dots)
                 Item {
                     id: moreIconContainer
@@ -662,7 +831,7 @@ Item {
                         id: morePopup
                         parent: audioControls
                         width: 140
-                        height: 120
+                        height: 160
                         radius: 10
                         // Use the same dynamic color as the controls bar
                         color: Qt.rgba(
@@ -966,6 +1135,51 @@ Item {
                                         } else {
                                         moreHoverTimer.restart()
                                     }
+                                }
+                            }
+
+                            // Queue button
+                            Rectangle {
+                                id: queueButton
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 32
+                                radius: 8
+                                property bool isHovered: false
+                                property bool isPressed: false
+
+                                color: isPressed
+                                       ? pressedButtonColor
+                                       : (isHovered ? hoverButtonColor : "transparent")
+
+                                Behavior on color {
+                                    ColorAnimation { duration: 200; easing.type: Easing.OutCubic }
+                                }
+                                Behavior on scale {
+                                    NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+                                }
+
+                                scale: isPressed ? 0.95 : (isHovered ? 1.02 : 1.0)
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "Queue"
+                                    color: iconColor
+                                    font.pixelSize: 12
+                                    font.weight: Font.Medium
+                                    opacity: 0.9
+                                }
+
+                                TapHandler {
+                                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                    acceptedButtons: Qt.LeftButton
+                                    onTapped: queueClicked()
+                                    onPressedChanged: queueButton.isPressed = pressed
+                                }
+
+                                HoverHandler {
+                                    cursorShape: Qt.PointingHandCursor
+                                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                    onHoveredChanged: queueButton.isHovered = hovered
                                 }
                             }
                         }

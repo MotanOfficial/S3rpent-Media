@@ -15,11 +15,12 @@ class SingleInstanceManager : public QObject
     Q_PROPERTY(bool isPrimaryInstance READ isPrimaryInstance NOTIFY isPrimaryInstanceChanged)
 
 public:
-    explicit SingleInstanceManager(QObject *parent = nullptr);
+    explicit SingleInstanceManager(bool allowMultipleInstances = false, QObject *parent = nullptr);
     ~SingleInstanceManager();
 
     bool isPrimaryInstance() const { return m_isPrimaryInstance; }
     bool tryActivateExistingInstance(const QString &filePath = QString());
+    void initializeSystemTray();  // Defer tray setup until after first frame
     void updateTrayIcon();  // Update tray icon after app icon is set
 
 signals:
@@ -33,6 +34,7 @@ private slots:
 
 private:
     bool m_isPrimaryInstance;
+    bool m_allowMultipleInstances = false;
     QLocalServer *m_localServer;
     QSharedMemory *m_sharedMemory;
     QString m_serverName;

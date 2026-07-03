@@ -465,14 +465,18 @@ Item {
             }
             
             // Trigger reload by temporarily clearing and restoring source.
-            // Keep an immutable copy to avoid restoring an emptied URL object.
+            // NOTE: Do NOT do this for network URLs or for FFmpeg backend (yt-dlp pipe). It can
+            // stop playback mid-open and crash/tear down decode threads.
             const currentSource = source.toString()
-            source = ""
-            Qt.callLater(function() {
-                if (videoPlayer.source === "" && currentSource !== "") {
-                    videoPlayer.source = currentSource
-                }
-            })
+            const isNetwork = (currentSource.indexOf("http://") === 0 || currentSource.indexOf("https://") === 0)
+            if (!useFFmpeg && !isNetwork) {
+                source = ""
+                Qt.callLater(function() {
+                    if (videoPlayer.source === "" && currentSource !== "") {
+                        videoPlayer.source = currentSource
+                    }
+                })
+            }
         } else {
             // No video loaded, just reset ready flags
             wmfReady = false
@@ -668,6 +672,7 @@ Item {
             
             S3rpentMedia.FFmpegVideoPlayer {
                 id: ffmpegPlayerInstance
+                logTag: "MainVideo"
                 source: videoPlayer.source
 
                 Component.onCompleted: {
@@ -988,30 +993,37 @@ Item {
                 color: "#000000"
                 z: 0
             }
-            
-            S3rpentMedia.MPVVideoItem {
-                id: mpvVideoDisplayOpenGL
-                player: videoPlayer.mpvPlayer
+
+            // Lazy-load MPV visual item from a separate QML file so builds without
+            // libmpv can still load this file when MPV backend is not active.
+            Loader {
+                id: mpvOpenGLItemLoader
                 anchors.fill: parent
-                visible: mpvVideoDisplayLoader.visible && videoPlayer.mpvPlayer !== null
-                enabled: true
+                active: mpvVideoDisplayLoader.visible
+                source: active ? "MPVOpenGLVideoItemHost.qml" : ""
                 z: 1
-                
-                Component.onCompleted: {
-                    console.log("[MPVVideoItem] Component created, player:", player)
-                    console.log("[MPVVideoItem] Size:", width, "x", height)
-                    console.log("[MPVVideoItem] Using QQuickFramebufferObject-based renderer (Qt Quick native)")
+
+                onLoaded: {
+                    if (item) {
+                        item.player = videoPlayer.mpvPlayer
+                        item.videoRotation = videoPlayer.videoRotation
+                        item.rendererVisible = mpvVideoDisplayLoader.visible && videoPlayer.mpvPlayer !== null
+                    }
                 }
-                
-                onPlayerChanged: {
-                    console.log("[MPVVideoItem] Player changed")
-                }
-                
-                // Apply rotation transform
-                transform: Rotation {
-                    origin.x: mpvVideoDisplayOpenGL.width / 2
-                    origin.y: mpvVideoDisplayOpenGL.height / 2
-                    angle: videoPlayer.videoRotation
+
+                Connections {
+                    target: videoPlayer
+                    function onMpvPlayerChanged() {
+                        if (mpvOpenGLItemLoader.item) {
+                            mpvOpenGLItemLoader.item.player = videoPlayer.mpvPlayer
+                            mpvOpenGLItemLoader.item.rendererVisible = mpvVideoDisplayLoader.visible && videoPlayer.mpvPlayer !== null
+                        }
+                    }
+                    function onVideoRotationChanged() {
+                        if (mpvOpenGLItemLoader.item) {
+                            mpvOpenGLItemLoader.item.videoRotation = videoPlayer.videoRotation
+                        }
+                    }
                 }
             }
         }
@@ -2706,7 +2718,13 @@ Item {
                     } else if (videoPlayer.useWMF && wmfPlayer) {
                         wmfPlayer.seek(seekPos)
                     } else if (videoPlayer.useFFmpeg && videoPlayer.ffmpegPlayer) {
-                        videoPlayer.ffmpegPlayer.seek(seekPos)
+                        // FFmpeg+yt-dlp pipe streams often have duration=0 and are not seekable.
+                        // Never issue seeks in that state; it will clamp to 0 and effectively loop.
+                        if (videoPlayer.duration > 0 && videoPlayer.ffmpegPlayer.seekable) {
+                            videoPlayer.ffmpegPlayer.seek(seekPos)
+                        } else {
+                            console.log("[VideoPlayer] Skipping seek for FFmpeg (duration/seekable not ready)", "duration=", videoPlayer.duration, "seekable=", videoPlayer.ffmpegPlayer.seekable)
+                        }
                     } else {
                         mediaPlayer.position = seekPos
                     }
@@ -2761,10 +2779,13 @@ Item {
                     const currentVol = videoPlayer.volume
                     if (currentVol > 0) {
                         videoPlayer.savedVolume = currentVol
-                        videoPlayer.volume = currentVol  // Sync the property
+                        videoPlayer.volume = currentVol  // Keep UI state consistent
                     }
                     // Mute by setting volume to 0
-                    if (videoPlayer.useLibmpv && videoPlayer.mpvPlayer) {
+                    videoPlayer.volume = 0
+                    if (videoPlayer.useFFmpeg && videoPlayer.ffmpegPlayer) {
+                        videoPlayer.ffmpegPlayer.volume = 0
+                    } else if (videoPlayer.useLibmpv && videoPlayer.mpvPlayer) {
                         videoPlayer.mpvPlayer.volume = 0
                     } else if (videoPlayer.useWMF && wmfPlayer) {
                         wmfPlayer.volume = 0
@@ -2775,7 +2796,9 @@ Item {
                     // Restore saved volume
                     if (videoPlayer.savedVolume > 0) {
                         videoPlayer.volume = videoPlayer.savedVolume
-                        if (videoPlayer.useLibmpv && videoPlayer.mpvPlayer) {
+                        if (videoPlayer.useFFmpeg && videoPlayer.ffmpegPlayer) {
+                            videoPlayer.ffmpegPlayer.volume = videoPlayer.savedVolume
+                        } else if (videoPlayer.useLibmpv && videoPlayer.mpvPlayer) {
                             videoPlayer.mpvPlayer.volume = videoPlayer.savedVolume
                         } else if (videoPlayer.useWMF && wmfPlayer) {
                             wmfPlayer.volume = videoPlayer.savedVolume
@@ -2785,7 +2808,9 @@ Item {
                     } else {
                         // If no saved volume, restore to a reasonable default (0.5)
                         videoPlayer.volume = 0.5
-                        if (videoPlayer.useLibmpv && videoPlayer.mpvPlayer) {
+                        if (videoPlayer.useFFmpeg && videoPlayer.ffmpegPlayer) {
+                            videoPlayer.ffmpegPlayer.volume = 0.5
+                        } else if (videoPlayer.useLibmpv && videoPlayer.mpvPlayer) {
                             videoPlayer.mpvPlayer.volume = 0.5
                         } else if (videoPlayer.useWMF && wmfPlayer) {
                             wmfPlayer.volume = 0.5
@@ -2863,8 +2888,8 @@ Item {
         }
     }
     property var metaData: (useLibmpv && mpvPlayer) ? ({}) : ((useWMF && wmfPlayer) ? ({}) : ((useLibvlc && vlcPlayer) ? ({}) : mediaPlayer.metaData))
-    property int implicitWidth: (useLibmpv && mpvPlayer) ? 0 : videoDisplay.implicitWidth  // libmpv doesn't expose this via VideoOutput
-    property int implicitHeight: (useLibmpv && mpvPlayer) ? 0 : videoDisplay.implicitHeight  // libmpv doesn't expose this via VideoOutput
+    implicitWidth: (useLibmpv && mpvPlayer) ? 0 : videoDisplay.implicitWidth  // libmpv doesn't expose this via VideoOutput
+    implicitHeight: (useLibmpv && mpvPlayer) ? 0 : videoDisplay.implicitHeight  // libmpv doesn't expose this via VideoOutput
     property bool seekable: (useLibmpv && mpvPlayer) ? mpvPlayer.seekable : 
                             ((useWMF && wmfPlayer) ? wmfPlayer.seekable : 
                             ((useLibvlc && vlcPlayer) ? vlcPlayer.seekable :

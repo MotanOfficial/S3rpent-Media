@@ -28,7 +28,7 @@ Item {
     signal resetViewRequested()
     signal toggleImageControls()
     signal toggleVideoPlayback()
-    signal fileDropped(url fileUrl)
+    signal filesDropped(var fileUrls)
     signal dropActiveChanged(bool active)
     
     // Functions (removed - not needed, using signals instead)
@@ -114,8 +114,7 @@ Item {
         onDropped: function(drop) {
             dropActiveChanged(false)
             if (drop.hasUrls && drop.urls.length > 0) {
-                const fileUrl = drop.urls[0]
-                fileDropped(fileUrl)
+                filesDropped(drop.urls)
             }
         }
     }

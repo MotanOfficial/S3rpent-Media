@@ -28,7 +28,6 @@ CustomAudioProcessor::CustomAudioProcessor(QObject *parent)
     
     // Processor is enabled by default - EQ should work immediately
     m_enabled.store(true);
-    qDebug() << "[CustomAudioProcessor] Created (enabled by default)";
 }
 
 CustomAudioProcessor::~CustomAudioProcessor()
@@ -58,16 +57,6 @@ void CustomAudioProcessor::initialize(const QAudioFormat &format)
     m_coefficientsDirty.store(true);
     updateFilterCoefficients();
     
-    // Log current EQ settings for debugging
-    bool hasNonZeroGains = false;
-    for (int i = 0; i < 10; ++i) {
-        if (qAbs(m_bandGains[i].load()) > 0.01f) {
-            hasNonZeroGains = true;
-            break;
-        }
-    }
-    
-    qDebug() << "[CustomAudioProcessor] Initialized with format: sample rate:" << m_sampleRate << "channels:" << m_channels << "enabled:" << m_enabled.load() << "EQ settings preserved:" << hasNonZeroGains;
 }
 
 void CustomAudioProcessor::setBandGain(int band, qreal gainDb)
@@ -87,14 +76,10 @@ void CustomAudioProcessor::setBandGain(int band, qreal gainDb)
         m_bandGains[band].store(newGain);
         m_coefficientsDirty.store(true); // Mark coefficients as dirty
         
-        qDebug() << "[CustomAudioProcessor] Band" << band << "gain set to" << newGain << "dB (was" << oldGain << "dB), enabled:" << m_enabled.load() << "sampleRate:" << m_sampleRate;
-        
         // Force immediate coefficient update if processor is enabled and format is initialized
         // This ensures coefficients are ready for the next buffer
         if (m_enabled.load() && m_sampleRate > 0) {
             updateFilterCoefficients();
-        } else {
-            qDebug() << "[CustomAudioProcessor] Not updating coefficients yet - enabled:" << m_enabled.load() << "sampleRate:" << m_sampleRate;
         }
     }
 }
@@ -119,7 +104,6 @@ void CustomAudioProcessor::resetEQ()
 
     if (changed) {
         m_coefficientsDirty.store(true); // Mark coefficients as dirty
-        qDebug() << "[CustomAudioProcessor] Reset all EQ bands to 0 dB";
         if (m_enabled.load() && m_sampleRate > 0) {
             updateFilterCoefficients();
         }
@@ -156,11 +140,8 @@ void CustomAudioProcessor::setAllBandGains(const QVariantList &gains)
     
     if (changed) {
         m_coefficientsDirty.store(true);
-        qDebug() << "[CustomAudioProcessor] Set all band gains at once";
         if (m_enabled.load() && m_sampleRate > 0) {
             updateFilterCoefficients();
-        } else {
-            qDebug() << "[CustomAudioProcessor] Not updating coefficients yet - enabled:" << m_enabled.load() << "sampleRate:" << m_sampleRate;
         }
     }
 }
@@ -170,7 +151,6 @@ void CustomAudioProcessor::setEnabled(bool enabled)
     bool oldEnabled = m_enabled.load();
     if (oldEnabled != enabled) {
         m_enabled.store(enabled);
-        qDebug() << "[CustomAudioProcessor]" << (enabled ? "Enabled" : "Disabled");
     }
 }
 
@@ -196,10 +176,6 @@ QByteArray CustomAudioProcessor::processBuffer(const QAudioBuffer &buffer)
             float gain = m_bandGains[i].load();
             if (qAbs(gain) > 0.01f) {
                 needsProcessing = true;
-                static int logCount = 0;
-                if (logCount++ < 3) {  // Log first 3 times to avoid spam
-                    qDebug() << "[CustomAudioProcessor] Processing needed - band" << i << "has gain" << gain << "dB, enabled:" << m_enabled.load();
-                }
                 break;
             }
         }
@@ -260,11 +236,6 @@ QByteArray CustomAudioProcessor::processBuffer(const QAudioBuffer &buffer)
         return result;
     }
     
-    static int processLogCount = 0;
-    if (processLogCount++ < 3) {  // Log first 3 times to avoid spam
-        qDebug() << "[CustomAudioProcessor] Processing buffer with EQ - sampleCount:" << sampleCount << "channels:" << m_channels << "format:" << sampleFormat;
-    }
-
     // Process with EQ
     processInPlace(floatSamples.data(), numSamples, m_channels);
 
@@ -316,14 +287,12 @@ void CustomAudioProcessor::updateFilterCoefficients()
     
     // If sample rate is not initialized, can't calculate coefficients
     if (m_sampleRate <= 0) {
-        qDebug() << "[CustomAudioProcessor] Cannot update coefficients - sample rate not initialized";
         return;
     }
 
     // Get inactive buffer for writing new coefficients
     int inactiveBuf = 1 - m_filterBank[0].activeBuffer.load();
 
-    qDebug() << "[CustomAudioProcessor] Updating filter coefficients...";
     for (int ch = 0; ch < m_channels && ch < 2; ++ch) {
         for (int band = 0; band < 10; ++band) {
             float gain = m_bandGains[band].load();
@@ -332,9 +301,6 @@ void CustomAudioProcessor::updateFilterCoefficients()
                                    gain,
                                    EQ_Q_VALUES[band],
                                    static_cast<float>(m_sampleRate));
-            if (qAbs(gain) > 0.01f) {
-                qDebug() << "[CustomAudioProcessor] Band" << band << "(" << EQ_FREQUENCIES[band] << "Hz):" << gain << "dB";
-            }
         }
     }
 
@@ -344,7 +310,6 @@ void CustomAudioProcessor::updateFilterCoefficients()
     }
 
     m_coefficientsDirty.store(false); // Reset dirty flag
-    qDebug() << "[CustomAudioProcessor] Filter coefficients updated and swapped";
 }
 
 void CustomAudioProcessor::calculatePeakingFilter(Biquad& bq, float freq, float gainDb, float Q, float sampleRate)
@@ -407,12 +372,4 @@ void CustomAudioProcessor::calculatePeakingFilter(Biquad& bq, float freq, float 
     
     // Reset filter state when updating coefficients
     bq.reset();
-    
-    // Debug: log filter coefficients for non-zero gains
-    if (qAbs(gainDb) > 0.01f) {
-        static int logCount = 0;
-        if (logCount++ < 3) {
-            qDebug() << "[CustomAudioProcessor] Filter" << freq << "Hz:" << "gain=" << gainDb << "dB, b0=" << bq.b0 << "b1=" << bq.b1 << "b2=" << bq.b2 << "a1=" << bq.a1 << "a2=" << bq.a2;
-        }
-    }
 }

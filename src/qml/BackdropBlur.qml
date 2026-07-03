@@ -6,7 +6,6 @@ Item {
     id: backdropBlur
     
     property url imageSource: ""  // Cover art or image to blur
-    property bool enabled: true
     property real blurRadius: 80  // Blur radius in pixels (increased for more blur)
     property real scaleFactor: 1.5  // Scale up factor (increased to cover more area)
     property real darkOverlay: 0.25  // Dark overlay opacity (reduced for less darkness)

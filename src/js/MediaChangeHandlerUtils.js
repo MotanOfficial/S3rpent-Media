@@ -44,7 +44,10 @@ function handleCurrentImageChanged(params) {
         loadDirectoryImages,
         extractAudioCoverArt,
         getAudioFormatInfo,
-        logToDebugConsole
+        loadDirectoryAudio,
+        logToDebugConsole,
+        forceNetworkAudio = false,
+        preserveStreamCoverArt = false
     } = params
     
     const imageStr = currentImage.toString()
@@ -109,9 +112,9 @@ function handleCurrentImageChanged(params) {
     // New image to load - reset view and detect type
     result.actionsToPerform.push(() => resetView())
     
-    const isVideo = checkIfVideo(currentImage)
+    const isVideo = forceNetworkAudio ? false : checkIfVideo(currentImage)
     const isGif = checkIfGif(currentImage)
-    const isAudio = checkIfAudio(currentImage)
+    const isAudio = forceNetworkAudio || checkIfAudio(currentImage)
     const isMarkdown = checkIfMarkdown(currentImage)
     const isText = checkIfText(currentImage)
     const isPdf = checkIfPdf(currentImage)
@@ -239,16 +242,25 @@ function handleCurrentImageChanged(params) {
             result.propertiesToSet.videoPlayerLoaderActive = false
         }
         // Note: loadAudioPlayer() will handle stopping/clearing/unloading the old audio player
-        // Reset cover art and format info
-        result.propertiesToSet.audioCoverArt = ""
+        // Reset cover art and format info (keep YouTube thumbnail when yt-dlp already provided it)
+        if (!preserveStreamCoverArt) {
+            result.propertiesToSet.audioCoverArt = ""
+        }
         result.propertiesToSet.audioFormatInfo = { sampleRate: 0, bitrate: 0 }
         // Try to extract cover art immediately (might be available)
         result.actionsToPerform.push(() => {
             Qt.callLater(function() {
-                extractAudioCoverArt()
+                if (!preserveStreamCoverArt) {
+                    extractAudioCoverArt()
+                }
                 getAudioFormatInfo(0) // Get sample rate only
             })
         })
+
+        // Load all audio files from directory for navigation (only if not already navigating)
+        if (!_navigatingImages) {
+            result.actionsToPerform.push(() => loadDirectoryAudio(currentImage))
+        }
     } else if (isMarkdown || isText || isPdf || isZip || isModel) {
         // Video and audio already stopped above, no need to stop again
     }

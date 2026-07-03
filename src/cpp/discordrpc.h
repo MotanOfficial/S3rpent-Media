@@ -7,6 +7,7 @@
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <QFileInfo>
+#include <QThread>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -53,6 +54,8 @@ private:
     QByteArray readFromPipe();
     QString findDiscordPipe();
     QString formatTime(qint64 milliseconds);
+    void ensureIoThread();
+    void setConnected(bool connected);
 
     bool m_enabled;
     bool m_connected;
@@ -67,6 +70,10 @@ private:
     QTimer *m_reconnectTimer;
     QJsonObject m_lastPresence;
     bool m_hasLastPresence;
+
+    QThread *m_ioThread;
+    QObject *m_ioObject;
+    qint64 m_lastPresenceSendMs;
 };
 
 #endif // DISCORDRPC_H

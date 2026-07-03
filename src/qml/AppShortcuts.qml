@@ -11,6 +11,8 @@ Item {
     // Properties to bind to (passed from parent)
     property var window: null
     property var openDialog: null
+    /** Optional: function to open “paste YouTube / stream URL” UI */
+    property var openYoutubeDialog: null
     
     Shortcut {
         sequences: [ StandardKey.Open ]
@@ -76,6 +78,19 @@ Item {
             }
         }
     }
+
+    Shortcut {
+        sequence: "Ctrl+Shift+Y"
+        context: Qt.ApplicationShortcut
+        enabled: appShortcuts.window !== null 
+                 && appShortcuts.openYoutubeDialog !== null
+                 && typeof youtubeDialogEnabled !== "undefined" 
+                 && youtubeDialogEnabled === true
+        onActivated: {
+            if (appShortcuts.openYoutubeDialog)
+                appShortcuts.openYoutubeDialog()
+        }
+    }
     
     // ESC key to exit fullscreen or easter eggs
     Shortcut {
@@ -83,6 +98,10 @@ Item {
         enabled: appShortcuts.window !== null
         onActivated: {
             if (appShortcuts.window) {
+                if (appShortcuts.window.musicOverlayVisible) {
+                    appShortcuts.window.musicOverlayVisible = false
+                    return
+                }
                 // First priority: exit Undertale fight if active (it uses fullscreen)
                 if (appShortcuts.window.undertaleFightEnabled) {
                     appShortcuts.window.stopUndertaleFight()

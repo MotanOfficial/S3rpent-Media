@@ -6,8 +6,6 @@ Canvas {
     
     property color accentColor: "#121216"
     property var paletteColors: []  // Array of colors for gradient
-    property bool enabled: true
-    
     anchors.fill: parent
     visible: enabled && paletteColors && paletteColors.length > 1
     z: -1  // Background layer

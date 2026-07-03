@@ -15,7 +15,7 @@ Item {
     property real panX: 0
     property real panY: 0
     
-    signal fileDropped(url fileUrl)
+    signal filesDropped(var fileUrls)
     signal adjustZoomRequested(real delta)
     signal resetViewRequested()
     
@@ -74,7 +74,7 @@ Item {
             onDropped: function(drop) {
                 dropActive = false
                 if (drop.hasUrls && drop.urls.length > 0) {
-                    fileDropped(drop.urls[0])
+                    filesDropped(drop.urls)
                     drop.acceptProposedAction()
                 }
             }

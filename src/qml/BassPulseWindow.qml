@@ -21,8 +21,9 @@ Window {
     property int glowStartTime: 0  // Track when glow started for ripple effect
     property int currentGlowWave: -1  // Which wave is currently glowing (-1 = none)
     
-    visible: enabled && mainWindow !== null && bassAmplitude > 0.1 && !isWindowMoving
-    flags: Qt.Window | Qt.FramelessWindowHint | Qt.Tool | Qt.WindowTransparentForInput
+    visible: enabled && mainWindow !== null && bassAmplitude > 0.1 && !isWindowMoving && 
+             mainWindow.visibility !== Window.Minimized && mainWindow.visible && mainWindow.active
+    flags: Qt.Window | Qt.FramelessWindowHint | Qt.Tool | Qt.WindowTransparentForInput | Qt.WindowDoesNotAcceptFocus
     color: "transparent"
     
     // Position and size to surround the main window
@@ -71,10 +72,9 @@ Window {
     // Also reset glow when window becomes invisible
     onVisibleChanged: {
         if (visible && mainWindow) {
-            x = mainWindow.x - padding
-            y = mainWindow.y - padding
-            width = mainWindow.width + (padding * 2)
-            height = mainWindow.height + (padding * 2)
+            // NOTE: x, y, width, height are already bound via binding expressions above.
+            // Do NOT directly assign them here as that would break the bindings and
+            // can cause binding-engine feedback loops. Just update cached values.
             lastMainWindowX = mainWindow.x
             lastMainWindowY = mainWindow.y
         } else if (!visible) {
@@ -92,9 +92,19 @@ Window {
     property int mainWindowHeight: mainWindow ? mainWindow.height : 0
     property int baseOffset: 40  // Offset from main window edges (matches padding)
     
-    // Apply non-linear curve to bass amplitude for more gradual response
-    // Square root curve: takes more bass to reach maximum expansion
-    property real adjustedBass: Math.pow(bassAmplitude, 1.5)  // Power curve for gradual response
+    // Apply non-linear curve to bass amplitude for more gradual response.
+    // Updated via timer (not a binding) to break the binding cascade that
+    // causes stack overflow when bassAmplitude changes during playback.
+    property real adjustedBass: 0.0
+    Timer {
+        id: bassUpdateTimer
+        interval: 16  // ~60fps sampling to break binding cascade
+        running: enabled && mainWindow !== null
+        repeat: true
+        onTriggered: {
+            adjustedBass = Math.pow(bassAmplitude, 1.5)
+        }
+    }
     
     // Detect bass spikes (kicks) and trigger glow - direct response, no smoothing
     onBassAmplitudeChanged: {
@@ -171,15 +181,38 @@ Window {
             // Position: start at baseOffset (20px) from bass pulse window edge to match main window position
             // Then expand outward (negative x/y and larger width/height)
             // Reduced multipliers and non-linear response for gradual expansion
-            x: baseOffset - (adjustedBass * 8 * (index + 1))  // Reduced from 15 to 8
-            y: baseOffset - (adjustedBass * 8 * (index + 1))
-            width: mainWindowWidth + (adjustedBass * 16 * (index + 1))  // Reduced from 30 to 16
-            height: mainWindowHeight + (adjustedBass * 16 * (index + 1))
+            // Use explicit updates instead of bindings to prevent stack overflow
+            x: baseOffset
+            y: baseOffset
+            width: mainWindowWidth
+            height: mainWindowHeight
             radius: 20  // Rounded corners like the main window
             color: "transparent"
             border.width: 3  // Thicker borders for more visibility
-            opacity: (bassAmplitude > 0.1) ? (0.6 / (index + 1)) * (0.5 + adjustedBass * 0.5) : 0  // Use adjustedBass for opacity too
+            opacity: (bassAmplitude > 0.1) ? (0.6 / (index + 1)) * 0.5 : 0
             antialiasing: true
+            
+            // Update properties explicitly via timer to prevent binding cascades
+            Timer {
+                id: updateTimer
+                interval: 16  // ~60fps
+                running: bassPulseWindow.enabled && mainWindow !== null
+                repeat: true
+                onTriggered: {
+                    // Guard against recursive updates
+                    const newX = baseOffset - (adjustedBass * 8 * (index + 1))
+                    const newY = baseOffset - (adjustedBass * 8 * (index + 1))
+                    const newWidth = mainWindowWidth + (adjustedBass * 16 * (index + 1))
+                    const newHeight = mainWindowHeight + (adjustedBass * 16 * (index + 1))
+                    const newOpacity = (bassAmplitude > 0.1) ? (0.6 / (index + 1)) * (0.5 + adjustedBass * 0.5) : 0
+                    
+                    if (waveRect.x !== newX) waveRect.x = newX
+                    if (waveRect.y !== newY) waveRect.y = newY
+                    if (waveRect.width !== newWidth) waveRect.width = newWidth
+                    if (waveRect.height !== newHeight) waveRect.height = newHeight
+                    if (waveRect.opacity !== newOpacity) waveRect.opacity = newOpacity
+                }
+            }
             
             // Brighten border color on bass hits - ripple effect from inner to outer
             // Calculate brightened color based on whether this wave is currently glowing
@@ -211,71 +244,6 @@ Window {
             
             // Use brightened color for border
             border.color: brightenedColor
-            
-            // Fast color transitions for responsive brightness changes
-            Behavior on border.color {
-                ColorAnimation {
-                    duration: 50  // Fast response to bass hits
-                    easing.type: Easing.OutQuad
-                }
-            }
-            
-            // Less smooth, more direct bass response
-            Behavior on x {
-                NumberAnimation {
-                    duration: 30  // Faster response
-                    easing.type: Easing.Linear  // Linear for more direct response
-                }
-            }
-            Behavior on y {
-                NumberAnimation {
-                    duration: 30
-                    easing.type: Easing.Linear
-                }
-            }
-            Behavior on width {
-                NumberAnimation {
-                    duration: 30
-                    easing.type: Easing.Linear
-                }
-            }
-            Behavior on height {
-                NumberAnimation {
-                    duration: 30
-                    easing.type: Easing.Linear
-                }
-            }
-            Behavior on opacity {
-                NumberAnimation {
-                    duration: 50  // Faster opacity changes
-                    easing.type: Easing.Linear
-                }
-            }
-            
-            // Update when main window size or bass amplitude changes
-            Connections {
-                target: bassPulseWindow
-                function onMainWindowWidthChanged() {
-                    if (waveRect) {
-                        waveRect.width = mainWindowWidth + (bassAmplitude * 30 * (index + 1))
-                    }
-                }
-                function onMainWindowHeightChanged() {
-                    if (waveRect) {
-                        waveRect.height = mainWindowHeight + (bassAmplitude * 30 * (index + 1))
-                    }
-                }
-                function onBassAmplitudeChanged() {
-                    if (waveRect) {
-                        const adjBass = Math.pow(bassAmplitude, 1.5)
-                        waveRect.x = baseOffset - (adjBass * 8 * (index + 1))
-                        waveRect.y = baseOffset - (adjBass * 8 * (index + 1))
-                        waveRect.width = mainWindowWidth + (adjBass * 16 * (index + 1))
-                        waveRect.height = mainWindowHeight + (adjBass * 16 * (index + 1))
-                    }
-                }
-            }
         }
     }
 }
-

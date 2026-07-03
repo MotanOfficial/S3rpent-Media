@@ -179,8 +179,16 @@ Rectangle {
                     id: thumbnailImage
                     anchors.fill: parent
                     anchors.margins: isCurrent ? 4 : 3
-                    source: index >= 0 && index < directoryImages.length 
-                            ? directoryImages[index] : ""
+                    property string _path: (index >= 0 && index < directoryImages.length && directoryImages[index])
+                                          ? directoryImages[index].toString().toLowerCase()
+                                          : ""
+                    property bool _isAudio: _path.endsWith(".mp3") || _path.endsWith(".wav") || _path.endsWith(".flac") || _path.endsWith(".ogg") ||
+                                           _path.endsWith(".aac") || _path.endsWith(".m4a") || _path.endsWith(".wma") || _path.endsWith(".opus") ||
+                                           _path.endsWith(".mp2") || _path.endsWith(".mp1") || _path.endsWith(".amr") ||
+                                           _path.indexOf("googlevideo.com") >= 0
+                    source: (index >= 0 && index < directoryImages.length && !thumbnailImage._isAudio)
+                            ? directoryImages[index]
+                            : ""
                     sourceSize.width: isCurrent ? 240 : 160
                     sourceSize.height: isCurrent ? 240 : 160
                     fillMode: Image.PreserveAspectFit
@@ -211,6 +219,16 @@ Rectangle {
                         font.pixelSize: isCurrent ? 24 : 16
                         visible: thumbnailImage.status === Image.Error
                     }
+                }
+
+                // Audio placeholder (don’t try to decode audio files as images)
+                Text {
+                    anchors.centerIn: parent
+                    text: "♪"
+                    color: "#ffffff"
+                    font.pixelSize: isCurrent ? 22 : 16
+                    opacity: 0.7
+                    visible: thumbnailImage._isAudio
                 }
                 
                 MouseArea {

@@ -13,6 +13,8 @@ public:
     explicit ColorUtils(QObject *parent = nullptr);
 
     Q_INVOKABLE QColor dominantColor(const QUrl &sourceUrl) const;
+    /** Windows personalization accent (DWM colorization). Returns invalid QColor when unavailable. */
+    Q_INVOKABLE QColor windowsAccentColor() const;
     Q_INVOKABLE QVariantList extractPaletteColors(const QUrl &sourceUrl, int count = 5) const;
     Q_INVOKABLE QVariantList createGradientStops(const QVariantList &colors) const;
     Q_INVOKABLE QUrl extractCoverArt(const QUrl &audioUrl) const;
@@ -24,6 +26,7 @@ public:
     Q_INVOKABLE QString readTextFile(const QUrl &fileUrl) const;
     Q_INVOKABLE bool writeTextFile(const QUrl &fileUrl, const QString &content) const;
     Q_INVOKABLE QVariantList getImagesInDirectory(const QUrl &fileUrl) const;
+    Q_INVOKABLE QVariantList getAudioFilesInDirectory(const QUrl &fileUrl) const;
     
     // File association functions
     Q_INVOKABLE bool registerAsDefaultImageViewer() const;

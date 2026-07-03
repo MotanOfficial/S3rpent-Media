@@ -1,5 +1,6 @@
-#include <QFileInfo>
+ #include <QFileInfo>
 #include <QApplication>
+#include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QUrl>
@@ -7,6 +8,10 @@
 #include <QDebug>
 #include <QIcon>
 #include <QQuickStyle>
+#include <QTimer>
+#ifdef Q_OS_WIN
+#include "windowsglobalhotkey.h"
+#endif
 #include <QQmlComponent>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
@@ -19,11 +24,16 @@
 #include <QDir>
 #include <QSettings>
 #include <QCoreApplication>
+#include <QMediaDevices>
+#include <QMediaPlayer>
+#include <QAudioOutput>
+#include <QAudioDecoder>
 #include <QFile>
 #include <QFontDatabase>
 #include <QFont>
 #include <optional>
 #include <QtGui/rhi/qrhi.h>
+#include <QElapsedTimer>
 
 #include "colorutils.h"
 #include "wmfvideoplayer.h"
@@ -49,18 +59,75 @@
 #include "coverartclient.h"
 #include "lastfmclient.h"
 #include "windowframehelper.h"
+#include "musicoverlaypositioner.h"
 #include "subtitleformatter.h"
 #include "mediaplayerwrapper.h"
 #include "embeddedsubtitleextractor.h"
 #include "ziparchivereader.h"
 #include "externaldraghelper.h"
 #include "modelsourceresolver.h"
+#include "youtubeplaybackhelper.h"
+#ifdef HAS_WEBRTC_P2P
+#include "webrtclistentogethermanager.h"
+#endif
 #include <oclero/qlementine/icons/QlementineIcons.hpp>
 
 // Constants
 namespace {
     constexpr int MAX_DIAGNOSTIC_PROPERTIES = 20;
     const QStringList ICON_PATHS = {":/icon.png", ":/icon.ico"};
+
+    // Qt Multimedia loads backends and decoder plugins lazily. Doing a minimal touch once at
+    // startup moves that cost off the first real file open (often hundreds of ms on Windows).
+    void warmupQtMultimediaAudio()
+    {
+        (void) QMediaDevices::defaultAudioOutput();
+        {
+            QMediaPlayer player;
+            QAudioOutput audioOut;
+            audioOut.setVolume(0.0f);
+            player.setAudioOutput(&audioOut);
+        }
+        QAudioDecoder decoder;
+        Q_UNUSED(decoder);
+    }
+
+    // Startup timer for tracking initialization phases
+    class StartupTimer {
+    public:
+        void start() {
+            m_timer.start();
+            m_lastTime = 0;
+            logPoint("Startup began");
+        }
+
+        void logPoint(const QString &phase) {
+            const qint64 elapsed = m_timer.elapsed();
+            const qint64 sinceLast = elapsed - m_lastTime;
+            m_lastTime = elapsed;
+            qDebug() << QString("[Startup] %1 took %2 ms (total: %3 ms)").arg(phase).arg(sinceLast).arg(elapsed);
+        }
+
+        void logToDebugConsole(QObject *debugConsole, const QString &phase) {
+            if (!debugConsole) return;
+            const qint64 elapsed = m_timer.elapsed();
+            const qint64 sinceLast = elapsed - m_lastTime;
+            m_lastTime = elapsed;
+            const QString message = QString("[Startup] %1 took %2 ms (total: %3 ms)").arg(phase).arg(sinceLast).arg(elapsed);
+            QMetaObject::invokeMethod(debugConsole, "addLog",
+                Qt::QueuedConnection,
+                Q_ARG(QString, message),
+                Q_ARG(QString, "info"));
+        }
+
+        qint64 elapsed() const {
+            return m_timer.elapsed();
+        }
+
+    private:
+        QElapsedTimer m_timer;
+        qint64 m_lastTime = 0;
+    };
 }
 
 // Helper function to activate a window
@@ -86,14 +153,15 @@ namespace {
         // Register types
         qmlRegisterType<WMFVideoPlayer>("s3rpent_media", 1, 0, "WMFVideoPlayer");
 #ifdef HAS_LIBMPV
-        if (MPVVideoPlayer::isAvailable()) {
-            qmlRegisterType<MPVVideoPlayer>("s3rpent_media", 1, 0, "MPVVideoPlayer");
-            // TEMPORARILY DISABLED: Register mpv widget container for QML embedding (mpc-qt style)
-            // This uses QOpenGLWidget internally, which is the ONLY approach that works in Qt 6
-            // qmlRegisterType<MPVQmlItem>("s3rpent_media", 1, 0, "MPVVideoWidget");
-            // QQuickFramebufferObject approach (minimal, clean implementation following strict rules)
-            qmlRegisterType<MPVVideoItem>("s3rpent_media", 1, 0, "MPVVideoItem");
-        }
+        // Always register MPV QML types when compiled in. QML type resolution happens
+        // at load time, before runtime availability checks, so conditional registration
+        // causes "is not a type" errors even if usage is guarded in QML.
+        qmlRegisterType<MPVVideoPlayer>("s3rpent_media", 1, 0, "MPVVideoPlayer");
+        // TEMPORARILY DISABLED: Register mpv widget container for QML embedding (mpc-qt style)
+        // This uses QOpenGLWidget internally, which is the ONLY approach that works in Qt 6
+        // qmlRegisterType<MPVQmlItem>("s3rpent_media", 1, 0, "MPVVideoWidget");
+        // QQuickFramebufferObject approach (minimal, clean implementation following strict rules)
+        qmlRegisterType<MPVVideoItem>("s3rpent_media", 1, 0, "MPVVideoItem");
         // Register D3D11-based mpv renderer
         /*
         if (MPVVideoPlayerD3D11::isAvailable()) {
@@ -101,6 +169,18 @@ namespace {
             qmlRegisterType<MPVVideoItemD3D11>("s3rpent_media", 1, 0, "MPVVideoItemD3D11");
         }
         */
+#else
+        // Keep QML loading even when libmpv is not compiled/found.
+        // Without these placeholders, any reference to MPV types fails at QML load time
+        // with "... is not a type", even if the MPV backend is not used.
+        qmlRegisterTypeNotAvailable("s3rpent_media", 1, 0, "MPVVideoPlayer",
+                                    QStringLiteral("libmpv support is not available in this build."));
+        qmlRegisterTypeNotAvailable("s3rpent_media", 1, 0, "MPVVideoItem",
+                                    QStringLiteral("libmpv support is not available in this build."));
+        qmlRegisterTypeNotAvailable("s3rpent_media", 1, 0, "MPVVideoPlayerD3D11",
+                                    QStringLiteral("libmpv support is not available in this build."));
+        qmlRegisterTypeNotAvailable("s3rpent_media", 1, 0, "MPVVideoItemD3D11",
+                                    QStringLiteral("libmpv support is not available in this build."));
 #endif
 #ifdef HAS_LIBVLC
         qmlRegisterType<VLCVideoPlayer>("s3rpent_media", 1, 0, "VLCVideoPlayer");
@@ -126,6 +206,14 @@ namespace {
         qmlRegisterType<ExternalDragHelper>("s3rpent_media", 1, 0, "ExternalDragHelper");
         qmlRegisterType<ModelSourceResolver>("s3rpent_media", 1, 0, "ModelSourceResolver");
         
+        // Register WebRTC Listen Together Manager (conditional on libdatachannel availability)
+#ifdef HAS_WEBRTC_P2P
+        qmlRegisterType<WebRTCListenTogetherManager>("s3rpent_media", 1, 0, "WebRTCListenTogetherManager");
+#else
+        qmlRegisterTypeNotAvailable("s3rpent_media", 1, 0, "WebRTCListenTogetherManager",
+                                    QStringLiteral("WebRTC P2P support is not available in this build."));
+#endif
+        
         // Register singletons (Qt 6 approach - no .qmldir needed)
         qmlRegisterSingletonInstance("s3rpent_media", 1, 0, "ColorUtils", &colorUtils);
         qmlRegisterSingletonInstance("s3rpent_media", 1, 0, "InstanceManager", &instanceManager);
@@ -134,9 +222,17 @@ namespace {
     // Extract file paths from command line arguments (supports multiple files)
     QList<QUrl> extractFilePaths(const QStringList &args)
     {
+        static const QStringList kIgnoredArgs = {
+            QStringLiteral("--allow-multiple-instances"),
+            QStringLiteral("--multi-instance"),
+            QStringLiteral("--debug"),
+        };
         QList<QUrl> fileUrls;
         for (int i = 1; i < args.size(); ++i) {
-            QFileInfo file(args.at(i));
+            const QString &arg = args.at(i);
+            if (kIgnoredArgs.contains(arg) || arg.startsWith(QLatin1Char('-')))
+                continue;
+            QFileInfo file(arg);
             if (file.exists() && file.isFile()) {
                 fileUrls.append(QUrl::fromLocalFile(file.absoluteFilePath()));
             } else if (!file.exists()) {
@@ -155,6 +251,11 @@ void initApplication(QApplication &app)
     app.setOrganizationName("s3rpent");
     app.setOrganizationDomain("s3rpent.media");
     app.setApplicationName("s3rpent_media");
+#ifdef S3RPENT_APP_VERSION
+    app.setApplicationVersion(QStringLiteral(S3RPENT_APP_VERSION));
+#else
+    app.setApplicationVersion(QStringLiteral("0.1"));
+#endif
     app.setQuitOnLastWindowClosed(false);
 }
 
@@ -232,14 +333,26 @@ void initIcons(QApplication &app)
     }
 }
 
-// Initialize fonts - load custom fonts from resources
+namespace {
+int addFontFromResources(const QString &resourcePath, QStringList *loadedFamilies = nullptr)
+{
+    int fontId = QFontDatabase::addApplicationFont(resourcePath);
+    if (fontId == -1) {
+        qWarning() << "[Fonts] Failed to load font from:" << resourcePath;
+        return -1;
+    }
+    if (loadedFamilies) {
+        *loadedFamilies += QFontDatabase::applicationFontFamilies(fontId);
+    }
+    return fontId;
+}
+}
+
+// Initialize fonts - load all custom fonts from resources.
 void initFonts(QApplication &app)
 {
-    QFontDatabase fontDb;
-    
-    // List of font files to load
-    // Note: qt_add_resources creates aliases with full path, so use resources/fonts/ prefix
-    QStringList fontFiles = {
+    QStringList loadedFamilies;
+    const QStringList allFonts = {
         ":/fonts/resources/fonts/goodly-regular.otf",
         ":/fonts/resources/fonts/goodly-bold.otf",
         ":/fonts/resources/fonts/goodly-semibold.otf",
@@ -251,77 +364,22 @@ void initFonts(QApplication &app)
         ":/fonts/resources/fonts/DTM-Sans.otf",
         ":/fonts/resources/fonts/Mars_Needs_Cunnilingus.ttf"
     };
-    
-    QStringList loadedFontFamilies;
-    
-    // Load each font file - try resources first, then file system
-    for (const QString &fontPath : fontFiles) {
-        int fontId = -1;
-        
-        // Try loading from resources first
-        fontId = fontDb.addApplicationFont(fontPath);
-        
-        // If that fails, try loading from file system (for development)
-        if (fontId == -1) {
-            QString appDir = QCoreApplication::applicationDirPath();
-            QString fileName = QFileInfo(fontPath).fileName();
-            QString fileSystemPath = appDir + "/" + fileName;
-            
-            // Also try in resources/fonts relative to app dir
-            if (!QFile::exists(fileSystemPath)) {
-                fileSystemPath = appDir + "/resources/fonts/" + fileName;
-            }
-            
-            // Also try in source directory (for development)
-            if (!QFile::exists(fileSystemPath)) {
-                QString sourcePath = QCoreApplication::applicationDirPath() + "/../../resources/fonts/" + fileName;
-                if (QFile::exists(sourcePath)) {
-                    fileSystemPath = sourcePath;
-                }
-            }
-            
-            if (QFile::exists(fileSystemPath)) {
-                fontId = fontDb.addApplicationFont(fileSystemPath);
-                if (fontId != -1) {
-                    qDebug() << "[Fonts] Loaded font from file system:" << fileSystemPath;
-                }
-            }
-        }
-        
-        if (fontId != -1) {
-            QStringList fontFamilies = fontDb.applicationFontFamilies(fontId);
-            if (!fontFamilies.isEmpty()) {
-                loadedFontFamilies.append(fontFamilies);
-                qDebug() << "[Fonts] Loaded font:" << fontFamilies.first() << "from" << fontPath;
-            } else {
-                qWarning() << "[Fonts] Failed to get font family from:" << fontPath;
-            }
-        } else {
-            qWarning() << "[Fonts] Failed to load font from:" << fontPath;
+
+    for (const QString &fontPath : allFonts) {
+        addFontFromResources(fontPath, &loadedFamilies);
+    }
+
+    QString goodlyFamily;
+    for (const QString &family : loadedFamilies) {
+        if (family.contains("Goodly", Qt::CaseInsensitive)) {
+            goodlyFamily = family;
+            break;
         }
     }
-    
-    // Set Goodly as the default application font (use regular weight)
-    if (!loadedFontFamilies.isEmpty()) {
-        // Find "Goodly" family (should be the same for all weights)
-        QString goodlyFamily;
-        for (const QString &family : loadedFontFamilies) {
-            if (family.contains("Goodly", Qt::CaseInsensitive)) {
-                goodlyFamily = family;
-                break;
-            }
-        }
-        
-        if (!goodlyFamily.isEmpty()) {
-            QFont defaultFont(goodlyFamily);
-            defaultFont.setStyleHint(QFont::SansSerif);
-            app.setFont(defaultFont);
-            qDebug() << "[Fonts] Set default application font to:" << goodlyFamily;
-        } else {
-            qWarning() << "[Fonts] Could not find Goodly font family in loaded fonts";
-        }
-    } else {
-        qWarning() << "[Fonts] No fonts were loaded successfully";
+    if (!goodlyFamily.isEmpty()) {
+        QFont defaultFont(goodlyFamily);
+        defaultFont.setStyleHint(QFont::SansSerif);
+        app.setFont(defaultFont);
     }
 }
 
@@ -444,7 +502,6 @@ QObject* loadMainWindow(QQmlApplicationEngine &engine)
 {
     // Use context property instead of initial properties for static flag
     engine.rootContext()->setContextProperty("isMainWindow", true);
-    
     QObject::connect(
         &engine,
         &QQmlApplicationEngine::objectCreationFailed,
@@ -491,6 +548,10 @@ void connectInstanceSignals(SingleInstanceManager &instanceManager,
 
 int main(int argc, char *argv[])
 {
+    // Startup timing - begin tracking before any initialization
+    StartupTimer startupTimer;
+    startupTimer.start();
+
     // CRITICAL: We need to read settings to determine renderer mode, but QSettings needs
     // the organization/application name to be set first. However, we need to set the
     // graphics API before QApplication is created. So we:
@@ -505,6 +566,8 @@ int main(int argc, char *argv[])
     QCoreApplication::setOrganizationDomain("s3rpent.media");
     QCoreApplication::setApplicationName("s3rpent_media");
     
+    startupTimer.logPoint("Pre-app setup (settings, graphics backend selection)");
+
     // Check settings to determine which Qt scenegraph backend to use.
     // Default behavior:
     // - Direct3D11 for normal app startup on Windows
@@ -514,16 +577,12 @@ int main(int argc, char *argv[])
     const QString videoBackend = settings.value("videoBackend", "mediaplayer").toString();
     QString mpvRendererMode = settings.value("mpvRendererMode", "opengl").toString();
     const bool forceOpenGLForMpv = (videoBackend == "libmpv");
-    qDebug() << "[Main] Reading videoBackend from settings:" << videoBackend;
-    qDebug() << "[Main] Reading mpvRendererMode from settings:" << mpvRendererMode;
-    qDebug() << "[Main] All video settings keys:" << settings.allKeys();
     settings.endGroup();
     
     // Check if debug console is enabled
     settings.beginGroup("debug");
     bool debugConsoleEnabled = settings.value("consoleEnabled", false).toBool();
     settings.endGroup();
-    qDebug() << "[Main] Debug console enabled:" << debugConsoleEnabled;
     
     // Select Qt graphics backend:
     // - libmpv backend => force OpenGL
@@ -532,29 +591,37 @@ int main(int argc, char *argv[])
         // Use OpenGL backend for libmpv renderer.
         qputenv("QSG_RHI_BACKEND", "opengl");
         QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
-        qDebug() << "[Main] libmpv backend selected - forcing OpenGL backend";
     } else {
         // Explicitly select D3D11 so startup defaults to DirectX for non-mpv backends.
         qputenv("QSG_RHI_BACKEND", "d3d11");
         QQuickWindow::setGraphicsApi(QSGRendererInterface::Direct3D11);
-        qDebug() << "[Main] Non-mpv backend selected - using Direct3D11 backend";
     }
     
     // Set style before creating QApplication (Qt recommendation)
     // Note: High DPI scaling is automatically enabled in Qt 6.10.1+
     QQuickStyle::setStyle("Basic");
-    
+
+    // Fractional monitor scale (125%/150%): reduce two-lane jitter vs PassThrough.
+    // Must be set before QGuiApplication / QApplication is constructed.
+    QGuiApplication::setHighDpiScaleFactorRoundingPolicy(
+        Qt::HighDpiScaleFactorRoundingPolicy::Round);
+
     QApplication app(argc, argv);
-    
+    startupTimer.logPoint("QApplication creation");
+
     // Initialize application (sets same org/app name, which is fine - just ensures consistency)
     initApplication(app);
+
+    // Defer multimedia warmup to background to improve perceived startup time.
+    // FFmpeg/Qt Multimedia initialization takes ~800ms which blocks window appearance.
+    // By deferring it, the window shows immediately and media backends init in background.
+    QTimer::singleShot(0, &app, [&startupTimer]() {
+        warmupQtMultimediaAudio();
+        startupTimer.logPoint("Background multimedia warmup");
+    });
+    startupTimer.logPoint("Application init (warmup deferred)");
     
     // Verify configured backend intent (actual RHI is checked after window is created)
-    if (forceOpenGLForMpv) {
-        qDebug() << "[RHI] OpenGL backend configured for libmpv";
-    } else {
-        qDebug() << "[RHI] Direct3D11 backend configured for non-mpv backend";
-    }
     
     // Load application language setting (reuse settings object from above)
     settings.beginGroup("app");
@@ -563,31 +630,33 @@ int main(int argc, char *argv[])
     
     // Load translation
     QTranslator *appTranslator = loadTranslation(app, appLanguage);
+    Q_UNUSED(appTranslator);
     
+    const QStringList args = app.arguments();
+    const bool allowMultipleInstances = args.contains(QStringLiteral("--allow-multiple-instances"))
+        || args.contains(QStringLiteral("--multi-instance"));
+
     // Create single instance manager and color utils (needed for singleton registration)
-    // Note: This creates the tray icon, but icon may not be set yet
-    SingleInstanceManager instanceManager;
+    SingleInstanceManager instanceManager(allowMultipleInstances);
     
     // Initialize icons (must be after QApplication is created)
     initIcons(app);
     
-    // Initialize fonts (must be after QApplication is created)
+    // Initialize fonts before QML engine loads so startup UI resolves families correctly.
     initFonts(app);
-    
-    // Update tray icon now that app icon is set
-    instanceManager.updateTrayIcon();
-    
+
     // Initialize logging
     initLogging();
+
+    startupTimer.logPoint("Icons, fonts, and logging init");
     
     ColorUtils colorUtils;
     
     // Get file paths from command line (supports multiple files)
-    const QStringList args = app.arguments();
     QList<QUrl> fileUrls = extractFilePaths(args);
     
     // If not primary instance, try to activate existing one
-    if (!instanceManager.isPrimaryInstance()) {
+    if (!allowMultipleInstances && !instanceManager.isPrimaryInstance()) {
         // Send first file path if available
         QString pathToSend = fileUrls.isEmpty() ? QStringLiteral("") : fileUrls.first().toLocalFile();
         if (instanceManager.tryActivateExistingInstance(pathToSend)) {
@@ -597,13 +666,48 @@ int main(int argc, char *argv[])
     
     // Create engine
     QQmlApplicationEngine engine;
-    
+    startupTimer.logPoint("QML Engine creation");
+
+    MusicOverlayPositioner musicOverlayPositioner(&app);
+    engine.rootContext()->setContextProperty(QStringLiteral("MusicOverlayPositioning"), &musicOverlayPositioner);
+
+    YouTubePlaybackHelper youtubePlaybackHelper;
+    engine.rootContext()->setContextProperty(QStringLiteral("YouTubePlayback"), &youtubePlaybackHelper);
+
+    // Expose whether YouTube dialog shortcut is enabled (debug builds only)
+#ifdef ENABLE_YOUTUBE_DIALOG
+    engine.rootContext()->setContextProperty(QStringLiteral("youtubeDialogEnabled"), QVariant(true));
+#else
+    engine.rootContext()->setContextProperty(QStringLiteral("youtubeDialogEnabled"), QVariant(false));
+#endif
+
+    // Expose whether libmpv is available (debug builds only)
+#ifdef HAS_LIBMPV
+    engine.rootContext()->setContextProperty(QStringLiteral("libmpvAvailable"), QVariant(true));
+#else
+    engine.rootContext()->setContextProperty(QStringLiteral("libmpvAvailable"), QVariant(false));
+#endif
+
+#ifdef HAS_WEBRTC_P2P
+    engine.rootContext()->setContextProperty(QStringLiteral("webrtcP2PAvailable"), QVariant(true));
+#else
+    engine.rootContext()->setContextProperty(QStringLiteral("webrtcP2PAvailable"), QVariant(false));
+#endif
+
     // Register QML types and singletons (singletons must be registered before loading QML)
     // Note: Singletons eliminate the need for context properties
     registerQmlTypes(engine, colorUtils, instanceManager);
+    startupTimer.logPoint("QML type registration");
+
+#ifdef Q_OS_WIN
+    auto *globalHotkey = new WindowsGlobalHotkey(&app);
+    engine.rootContext()->setContextProperty(QStringLiteral("overlayHotkey"), globalHotkey);
+#endif
     
-    // Load main window
+    // Load main window with detailed timing
+    startupTimer.logPoint("Before QML load");
     QObject *rootObject = loadMainWindow(engine);
+    startupTimer.logPoint("QML module loading (Main.qml parse + component creation)");
     if (!rootObject) {
         qCritical() << "Failed to create root object";
         return -1;
@@ -622,17 +726,15 @@ int main(int argc, char *argv[])
             } else {
                 qDebug() << "[RHI] ✓ OpenGL backend active (check GL logs to verify desktop GL vs ANGLE)";
             }
-        } else {
-            qWarning() << "[RHI] No RHI available yet (window may not be shown)";
         }
+        startupTimer.logPoint("Window created + RHI verification");
     }
     
     // Create debug console only if enabled in settings
     QObject *debugConsole = nullptr;
     if (debugConsoleEnabled) {
         debugConsole = createDebugConsole(engine, rootObject);
-    } else {
-        qDebug() << "[Main] Debug console is disabled in settings - skipping creation";
+        startupTimer.logToDebugConsole(debugConsole, "Debug console creation");
     }
     
     // Create WindowManager (parented to app for automatic cleanup)
@@ -648,7 +750,11 @@ int main(int argc, char *argv[])
 #ifdef Q_OS_WIN
     WindowFrameHelper *frameHelper = new WindowFrameHelper(&app);
     app.installNativeEventFilter(frameHelper);
-    qDebug() << "[Main] WindowFrameHelper installed as native event filter";
+    QObject::connect(frameHelper, &WindowFrameHelper::accentColorizationChanged, rootObject, [rootObject]() {
+        if (!rootObject->property("windowsAccentColorEnabled").toBool())
+            return;
+        QMetaObject::invokeMethod(rootObject, "updateAccentColor", Qt::QueuedConnection);
+    });
 #endif
     
     // Run diagnostics (only in DEBUG builds)
@@ -660,7 +766,13 @@ int main(int argc, char *argv[])
     
     // Add main window to pool
     windowManager.addMainWindow(rootObject);
-    
+    startupTimer.logToDebugConsole(debugConsole, "Window manager init");
+
+    // Calculate total startup time
+    const qint64 totalStartupTime = startupTimer.elapsed();
+    const QString totalTimeMsg = QString("[Startup] Total startup time: %1 ms").arg(totalStartupTime);
+    qDebug() << totalTimeMsg;
+
     // Set debug console reference in main window
     if (debugConsole && rootObject) {
         rootObject->setProperty("debugConsole", QVariant::fromValue(debugConsole));
@@ -669,8 +781,19 @@ int main(int argc, char *argv[])
             Qt::QueuedConnection,
             Q_ARG(QVariant, QVariant("[Main] Debug console connected from C++")), 
             Q_ARG(QVariant, QVariant("info")));
+        // Also log the total startup time to debug console
+        QMetaObject::invokeMethod(rootObject, "logToDebugConsole",
+            Qt::QueuedConnection,
+            Q_ARG(QVariant, QVariant(totalTimeMsg)),
+            Q_ARG(QVariant, QVariant("info")));
     }
-    
+
+    // High-impact startup deferral: initialize tray icon after first event-loop turn.
+    QTimer::singleShot(0, &instanceManager, [&instanceManager]() {
+        instanceManager.initializeSystemTray();
+        instanceManager.updateTrayIcon();
+    });
+
     // If files were provided on command line, load them
     if (!fileUrls.isEmpty()) {
         // Load first file in main window
@@ -693,6 +816,12 @@ int main(int argc, char *argv[])
     
     // Connect instance manager signals
     connectInstanceSignals(instanceManager, windowManager, rootObject);
-    
+
+#ifdef Q_OS_WIN
+    QTimer::singleShot(100, &app, [globalHotkey, rootObject]() {
+        globalHotkey->registerOverlayToggleHotkey(rootObject);
+    });
+#endif
+
     return app.exec();
 }

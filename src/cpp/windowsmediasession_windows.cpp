@@ -1,5 +1,5 @@
 #include "windowsmediasession.h"
-#include <QDebug>
+#include <QtGlobal>
 #include <QImage>
 #include <QBuffer>
 #include <QByteArray>
@@ -8,6 +8,7 @@
 #include <QDir>
 #include <QStandardPaths>
 #include <QFile>
+#include <QTimer>
 #include <string>
 
 #ifdef Q_OS_WIN
@@ -102,23 +103,16 @@ void WindowsMediaSession::initializeWindowsMediaSession()
             }
             
             g_dispatcher = winrt::Windows::System::DispatcherQueue::GetForCurrentThread();
-            if (g_dispatcher) {
-                qDebug() << "[WindowsMediaSession] Global DispatcherQueue initialized";
-            } else {
-                qDebug() << "[WindowsMediaSession] Failed to get DispatcherQueue after creation";
-            }
         }
         catch (const winrt::hresult_error& ex) {
-            qDebug() << "[WindowsMediaSession] Failed to initialize DispatcherQueue:" << ex.code() << ex.message().c_str();
+            Q_UNUSED(ex);
         }
         catch (...) {
-            qDebug() << "[WindowsMediaSession] Unknown error initializing DispatcherQueue";
         }
     }
     
     // Note: We can't get SystemMediaTransportControls here because we don't have a window yet
     // Call initializeWithWindow() after the window is created
-    qDebug() << "[WindowsMediaSession] Ready. Call initializeWithWindow() after window creation.";
 #else
     // MinGW fallback - use QMediaPlayer approach
     // LIMITATION: Qt 6's QMediaPlayer does NOT automatically integrate with Windows Media Session
@@ -126,10 +120,6 @@ void WindowsMediaSession::initializeWindowsMediaSession()
     // For full Windows integration (custom metadata + keyboard controls), MSVC compiler is required
     // to use WinRT APIs (SystemMediaTransportControls).
     m_windowsSessionInitialized = true;
-    qDebug() << "[WindowsMediaSession] Using QMediaPlayer-based Windows integration (MinGW)";
-    qDebug() << "[WindowsMediaSession] WARNING: With MinGW, Windows keyboard controls and custom metadata are NOT available";
-    qDebug() << "[WindowsMediaSession] Only file metadata from QMediaPlayer will be visible to Windows";
-    qDebug() << "[WindowsMediaSession] To enable full Windows integration, compile with MSVC compiler";
 #endif
 }
 
@@ -138,7 +128,6 @@ void WindowsMediaSession::cleanupWindowsMediaSession()
 #ifdef _MSC_VER
     WinRTData* winrtData = reinterpret_cast<WinRTData*>(m_systemControls);
     if (winrtData) {
-        qDebug() << "[WindowsMediaSession] Cleaning up MediaPlayer and SMTC";
         try {
             // Remove event handler (in C++/WinRT, you call the same method with the token to remove)
             if (winrtData->smtc && winrtData->buttonToken) {
@@ -157,7 +146,6 @@ void WindowsMediaSession::cleanupWindowsMediaSession()
 #endif
     
     m_windowsSessionInitialized = false;
-    qDebug() << "[WindowsMediaSession] Windows Media Session cleaned up";
 }
 
 void WindowsMediaSession::updateWindowsMediaSessionMetadata()
@@ -186,7 +174,6 @@ void WindowsMediaSession::updateWindowsMediaSessionMetadata()
         // Set title
         if (!m_title.isEmpty()) {
             music.Title(winrt::hstring(m_title.toStdWString()));
-            qDebug() << "[WindowsMediaSession] Set title:" << m_title;
         }
         
         // Set artist (clean up semicolons - Windows expects comma-separated or single artist)
@@ -195,7 +182,6 @@ void WindowsMediaSession::updateWindowsMediaSessionMetadata()
             // Replace semicolons with commas for better Windows compatibility
             cleanArtist.replace(";", ",");
             music.Artist(winrt::hstring(cleanArtist.toStdWString()));
-            qDebug() << "[WindowsMediaSession] Set artist:" << cleanArtist << "(original:" << m_artist << ")";
         }
         
         // Set album
@@ -228,7 +214,6 @@ void WindowsMediaSession::updateWindowsMediaSessionMetadata()
                         
                         // Use global DispatcherQueue (initialized once on GUI thread)
                         if (!g_dispatcher) {
-                            qDebug() << "[WindowsMediaSession] Global DispatcherQueue not initialized - cannot set thumbnail";
                             return;
                         }
                         
@@ -254,59 +239,44 @@ void WindowsMediaSession::updateWindowsMediaSessionMetadata()
                                             auto updater = smtc.DisplayUpdater();
                                             updater.Thumbnail(thumbnail);
                                             updater.Update();
-                                            
-                                            qDebug() << "[WindowsMediaSession] Thumbnail set successfully from:" << nativePathCopy;
-                                        } else {
-                                            qDebug() << "[WindowsMediaSession] SMTC no longer valid when thumbnail ready";
                                         }
                                     }
                                     catch (const winrt::hresult_error& ex) {
-                                        qDebug() << "[WindowsMediaSession] Failed to apply thumbnail:" << ex.code() << ex.message().c_str();
+                                        Q_UNUSED(ex);
                                     }
                                     catch (...) {
-                                        qDebug() << "[WindowsMediaSession] Unknown error applying thumbnail";
                                     }
                                 });
                             }
                             catch (const winrt::hresult_error& ex) {
-                                qDebug() << "[WindowsMediaSession] Failed to start thumbnail async operation:" << ex.code() << ex.message().c_str();
+                                Q_UNUSED(ex);
                             }
                             catch (...) {
-                                qDebug() << "[WindowsMediaSession] Unknown error starting thumbnail async operation";
                             }
                         });
-                        
-                        qDebug() << "[WindowsMediaSession] Thumbnail update queued (async):" << coverPath;
                     } else {
-                        qDebug() << "[WindowsMediaSession] Failed to copy thumbnail to trusted location";
                     }
                 } else {
-                    qDebug() << "[WindowsMediaSession] Thumbnail source file not found:" << sourcePath;
                 }
             }
             catch (const winrt::hresult_error& ex) {
-                qDebug() << "[WindowsMediaSession] Failed to set thumbnail:" << ex.code() << ex.message().c_str();
+                Q_UNUSED(ex);
             }
             catch (...) {
-                qDebug() << "[WindowsMediaSession] Unknown error setting thumbnail";
             }
         }
         
         // Update the display (must be called AFTER setting all properties including thumbnail)
         updater.Update();
-        
-        qDebug() << "[WindowsMediaSession] Metadata updated:" << m_title << "-" << m_artist;
     }
     catch (winrt::hresult_error const& ex) {
-        qDebug() << "[WindowsMediaSession] Failed to update metadata:" << ex.code() << ex.message().c_str();
+        Q_UNUSED(ex);
     }
     catch (...) {
-        qDebug() << "[WindowsMediaSession] Unknown error updating metadata";
     }
 #else
     // MinGW fallback - metadata is handled by QMediaPlayer
     // Custom metadata won't be available, but file metadata will be
-    qDebug() << "[WindowsMediaSession] Metadata update (MinGW - using QMediaPlayer):" << m_title << "-" << m_artist;
 #endif
 }
 
@@ -351,13 +321,11 @@ void WindowsMediaSession::updateWindowsMediaSessionPlaybackState()
         }
         
         smtc.PlaybackStatus(status);
-        qDebug() << "[WindowsMediaSession] Playback status updated:" << m_playbackStatus << "(MediaPlayer stays playing to keep session visible)";
     }
     catch (winrt::hresult_error const& ex) {
-        qDebug() << "[WindowsMediaSession] Failed to update playback status:" << ex.code() << ex.message().c_str();
+        Q_UNUSED(ex);
     }
     catch (...) {
-        qDebug() << "[WindowsMediaSession] Unknown error updating playback status";
     }
 #else
     // MinGW fallback - playback state is handled by QMediaPlayer
@@ -388,14 +356,11 @@ void WindowsMediaSession::updateWindowsMediaSessionTimeline()
         timeline.MaxSeekTime(std::chrono::milliseconds(m_duration));
         
         smtc.UpdateTimelineProperties(timeline);
-        
-        qDebug() << "[WindowsMediaSession] Timeline updated:" << m_position << "/" << m_duration << "ms";
     }
     catch (winrt::hresult_error const& ex) {
-        qDebug() << "[WindowsMediaSession] Failed to update timeline:" << ex.code() << ex.message().c_str();
+        Q_UNUSED(ex);
     }
     catch (...) {
-        qDebug() << "[WindowsMediaSession] Unknown error updating timeline";
     }
 #else
     // MinGW fallback - timeline is handled by QMediaPlayer
@@ -409,12 +374,10 @@ void WindowsMediaSession::initializeWithWindow(QObject* window)
     // MediaPlayer must be created ONCE and NEVER replaced during playback
     WinRTData* existingData = reinterpret_cast<WinRTData*>(m_systemControls);
     if (existingData && existingData->player && existingData->smtc) {
-        qDebug() << "[WindowsMediaSession] MediaPlayer and SMTC already exist - skipping initialization";
         return;
     }
     
     if (m_windowsSessionInitialized) {
-        qDebug() << "[WindowsMediaSession] WARNING: Flag says initialized but MediaPlayer doesn't exist - this should never happen!";
         m_windowsSessionInitialized = false;
     }
     
@@ -449,7 +412,6 @@ void WindowsMediaSession::initializeWithWindow(QObject* window)
         winrtData->smtc = winrtData->player.SystemMediaTransportControls();
         
         if (!winrtData->smtc) {
-            qDebug() << "[WindowsMediaSession] Failed to get SystemMediaTransportControls from MediaPlayer";
             delete winrtData;
             m_systemControls = nullptr;
             return;
@@ -475,23 +437,18 @@ void WindowsMediaSession::initializeWithWindow(QObject* window)
             {
                 switch (e.Button()) {
                     case winrt::Windows::Media::SystemMediaTransportControlsButton::Play:
-                        qDebug() << "[WindowsMediaSession] Play button pressed";
                         emit playRequested();
                         break;
                     case winrt::Windows::Media::SystemMediaTransportControlsButton::Pause:
-                        qDebug() << "[WindowsMediaSession] Pause button pressed";
                         emit pauseRequested();
                         break;
                     case winrt::Windows::Media::SystemMediaTransportControlsButton::Stop:
-                        qDebug() << "[WindowsMediaSession] Stop button pressed";
                         emit stopRequested();
                         break;
                     case winrt::Windows::Media::SystemMediaTransportControlsButton::Next:
-                        qDebug() << "[WindowsMediaSession] Next button pressed";
                         emit nextRequested();
                         break;
                     case winrt::Windows::Media::SystemMediaTransportControlsButton::Previous:
-                        qDebug() << "[WindowsMediaSession] Previous button pressed";
                         emit previousRequested();
                         break;
                     // DO NOT handle FastForward or Rewind - this prevents Windows from polling position
@@ -505,7 +462,6 @@ void WindowsMediaSession::initializeWithWindow(QObject* window)
             });
         
         m_windowsSessionInitialized = true;
-        qDebug() << "[WindowsMediaSession] MediaPlayer initialized - SMTC ready (works in Qt/Win32)";
         
         // CRITICAL: Update metadata and playback state AFTER Play() was called
         // Windows ignores metadata unless MediaPlayer has transitioned to Playing state at least once
@@ -514,22 +470,27 @@ void WindowsMediaSession::initializeWithWindow(QObject* window)
             updateWindowsMediaSessionMetadata();
         }
         updateWindowsMediaSessionPlaybackState();
+
+        // Apply any source that was set before WinRT initialization completed (MinGW path uses m_sessionPlayer).
+        if (m_sessionPlayer && m_source.isValid() && !m_source.isEmpty()) {
+            m_sessionPlayer->setSource(m_source);
+            QTimer::singleShot(100, this, &WindowsMediaSession::updateSessionMetadata);
+            QTimer::singleShot(500, this, &WindowsMediaSession::updateSessionPlaybackState);
+        }
     }
     catch (const winrt::hresult_error& e) {
-        qDebug() << "[WindowsMediaSession] WinRT error:" << e.code() << e.message().c_str();
+        Q_UNUSED(e);
         delete winrtData;
         m_systemControls = nullptr;
         m_windowsSessionInitialized = false;
     }
     catch (...) {
-        qDebug() << "[WindowsMediaSession] Unknown error initializing MediaPlayer";
         delete winrtData;
         m_systemControls = nullptr;
         m_windowsSessionInitialized = false;
     }
 #else
     Q_UNUSED(window);
-    qDebug() << "[WindowsMediaSession] initializeWithWindow() called but not using MSVC - WinRT not available";
 #endif
 }
 

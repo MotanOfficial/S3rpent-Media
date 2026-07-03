@@ -16,8 +16,33 @@ Item {
     
     // Expose mediaViewerLoaders to parent for access
     property alias mediaViewerLoaders: _mediaViewerLoaders
+    property bool mediaLoadersReady: false
     
     anchors.fill: parent
+
+    Component.onCompleted: {
+        // Defer heavy loader tree until first event-loop turn.
+        Qt.callLater(function() {
+            mediaLoadersReady = true
+        })
+    }
+
+    // Fallback placeholders so external code can safely access loader fields
+    // before MediaViewerLoaders is instantiated.
+    QtObject {
+        id: _nullLoader
+        property var item: null
+        property bool active: false
+    }
+    QtObject {
+        id: _nullTimer
+        function restart() {}
+    }
+    QtObject {
+        id: _nullImageControls
+        property bool thumbnailPopupVisible: false
+        function hideThumbnailPopup() {}
+    }
 
     // Media viewer - always visible, behind settings
     // Expose as property for blur capture
@@ -30,15 +55,20 @@ Item {
         Rectangle {
             id: viewer
             anchors.fill: parent
-            color: appWindow.backdropBlurEnabled
-                   ? "transparent"  // Completely transparent when backdrop blur is active
-                   : (appWindow.ambientGradientEnabled
-                      ? "transparent"  // Transparent when ambient gradient is active
-                      : (appWindow.snowEffectEnabled || appWindow.badAppleEffectEnabled
-                         ? "transparent"  // Transparent when snow or Bad Apple effect is active
-                         : (appWindow.gradientBackgroundEnabled && appWindow.paletteColors && appWindow.paletteColors.length > 1
-                            ? Qt.rgba(0, 0, 0, 0.15)  // Less dark overlay when gradient is active
-                            : Qt.darker(appWindow.accentColor, 1.15))))  // Solid color when gradient is off
+            // Let WindowBackground show through whenever a backdrop effect is on.
+            // Gradient canvas only paints when palette has 2+ colors, but the tint still
+            // must not be opaque or only "multi-color" mode would ever show the gradient.
+            color: !appWindow
+                   ? Qt.darker("#121216", 1.15)
+                   : appWindow.backdropBlurEnabled
+                     ? "transparent"
+                     : (appWindow.ambientGradientEnabled
+                        ? "transparent"
+                        : (appWindow.snowEffectEnabled || appWindow.badAppleEffectEnabled
+                           ? "transparent"
+                           : (appWindow.gradientBackgroundEnabled
+                              ? Qt.rgba(0, 0, 0, 0.15)
+                              : Qt.darker(appWindow.accentColor, 1.15))))
             clip: true
             focus: true
             property int padding: 0
@@ -84,19 +114,32 @@ Item {
                         }
                     }
                 }
-                onFileDropped: function(fileUrl) {
+                onFilesDropped: function(fileUrls) {
+                    if (!fileUrls || fileUrls.length === 0) return
                     // Ignore self-generated drag-out temp files/folders from ZIP panel.
-                    const dropped = fileUrl ? fileUrl.toString().replace(/\\/g, "/").toLowerCase() : ""
-                    if (dropped.indexOf("/s3rpent_media_zip_drag/") >= 0) {
-                        return
+                    const filtered = []
+                    for (let i = 0; i < fileUrls.length; i++) {
+                        const u = fileUrls[i]
+                        const dropped = u ? u.toString().replace(/\\/g, "/").toLowerCase() : ""
+                        if (dropped.indexOf("/s3rpent_media_zip_drag/") >= 0) {
+                            continue
+                        }
+                        filtered.push(u)
                     }
-                    appWindow.logToDebugConsole("[QML] File dropped, setting currentImage: " + fileUrl.toString(), "info")
-                    // Ensure window is visible when dropping file
+                    if (filtered.length === 0) return
+
                     if (!appWindow.visible) {
                         appWindow.show()
                         appWindow.raise()
                     }
-                    appWindow.currentImage = fileUrl
+
+                    if (typeof appWindow.handleDroppedFiles === "function") {
+                        appWindow.handleDroppedFiles(filtered)
+                        return
+                    }
+
+                    // Fallback: open first
+                    appWindow.currentImage = filtered[0]
                 }
                 onDropActiveChanged: function(active) {
                     appWindow.dropActive = active
@@ -104,13 +147,32 @@ Item {
             }
 
             // Media viewer loaders - all media viewer Loader components encapsulated here
-            MediaViewerLoaders {
+            Loader {
                 id: _mediaViewerLoaders
                 anchors.fill: parent
-                appWindow: pageStack.appWindow
-                resizeTimers: pageStack.resizeTimers
-                metadataPopup: pageStack.metadataPopup
-                metadataPopupManager: pageStack.appWindow.metadataPopupManager
+                active: mediaLoadersReady
+                asynchronous: true
+
+                // Mirror key properties so callers can keep using
+                // pageStack.mediaViewerLoaders.<loader> safely.
+                property var viewerLoader: item ? item.viewerLoader : _nullLoader
+                property var videoPlayerLoader: item ? item.videoPlayerLoader : _nullLoader
+                property var audioPlayerLoader: item ? item.audioPlayerLoader : _nullLoader
+                property var markdownViewerLoader: item ? item.markdownViewerLoader : _nullLoader
+                property var textViewerLoader: item ? item.textViewerLoader : _nullLoader
+                property var pdfViewerLoader: item ? item.pdfViewerLoader : _nullLoader
+                property var zipViewerLoader: item ? item.zipViewerLoader : _nullLoader
+                property var modelViewerLoader: item ? item.modelViewerLoader : _nullLoader
+                property var imageControlsHideTimer: item ? item.imageControlsHideTimer : _nullTimer
+                property var imageControls: item ? item.imageControls : _nullImageControls
+
+                sourceComponent: MediaViewerLoaders {
+                    anchors.fill: parent
+                    appWindow: pageStack.appWindow
+                    resizeTimers: pageStack.resizeTimers
+                    metadataPopup: pageStack.metadataPopup
+                    metadataPopupManager: pageStack.appWindow.metadataPopupManager
+                }
             }
 
             // Drop overlay
@@ -135,6 +197,7 @@ Item {
                     id: emptyStatePlaceholder
                 anchors.centerIn: parent
                     showingSettings: appWindow ? appWindow.showingSettings : false
+                    listenTogetherEnabled: appWindow ? appWindow.listenTogetherEnabled : false
                     appWindow: pageStack.appWindow
                     onOpenFileRequested: {
                         // Access dialog through pageStack (passed from Main.qml)
@@ -145,160 +208,167 @@ Item {
                             pageStack.appWindow.openDialog.open()
                         }
                     }
+                    onOpenListenTogetherRequested: {
+                        if (pageStack.appWindow) {
+                            pageStack.appWindow.showingMetadata = false
+                            pageStack.appWindow.showingSettings = false
+                            pageStack.appWindow.showingListenTogether = true
+                        }
+                    }
                 }
             }
         }
     }
 
-    // Settings page - overlays on top of media viewer
-    SettingsPage {
-        id: settingsPage
+    // Settings page - instantiate lazily only when opened.
+    Loader {
+        id: settingsPageLoader
         anchors.fill: parent
-        appWindow: pageStack.appWindow
-        mediaViewerItem: pageStack.mediaViewerItem  // Pass media viewer for blur capture
-        showingSettings: appWindow.showingSettings
-        accentColor: appWindow.accentColor
-        visible: appWindow.showingSettings
-        z: 10  // Above media viewer
-        foregroundColor: appWindow.foregroundColor
-        dynamicColoringEnabled: appWindow.dynamicColoringEnabled
-        gradientBackgroundEnabled: appWindow.gradientBackgroundEnabled
-        backdropBlurEnabled: appWindow.backdropBlurEnabled
-        ambientGradientEnabled: appWindow.ambientGradientEnabled
-        snowEffectEnabled: appWindow.snowEffectEnabled
-        badAppleEffectEnabled: appWindow.badAppleEffectEnabled
-        lyricsTranslationEnabled: appWindow.lyricsTranslationEnabled
-        lyricsTranslationApiKey: appWindow.lyricsTranslationApiKey
-        lyricsTranslationTargetLanguage: appWindow.lyricsTranslationTargetLanguage
-        appLanguage: appWindow.appLanguage
-        imageInterpolationMode: appWindow.imageInterpolationMode
-        dynamicResolutionEnabled: appWindow.dynamicResolutionEnabled
-        matchMediaAspectRatio: appWindow.matchMediaAspectRatio
-        autoHideTitleBar: appWindow.autoHideTitleBar
-        discordRPCEnabled: appWindow.discordRPCEnabled
-        coverArtSource: appWindow.coverArtSource
-        lastFMApiKey: appWindow.lastFMApiKey
-        debugConsoleEnabled: appWindow.debugConsoleEnabled
-        
-        onBackClicked: appWindow.showingSettings = false
-        onDynamicColoringToggled: function(enabled) {
-            appWindow.dynamicColoringEnabled = enabled
-            appWindow.updateAccentColor()
-        }
-        onGradientBackgroundToggled: function(enabled) {
-            appWindow.gradientBackgroundEnabled = enabled
-            if (enabled) {
-                appWindow.backdropBlurEnabled = false  // Disable backdrop blur when gradient is enabled
-                appWindow.ambientGradientEnabled = false  // Disable ambient gradient when gradient is enabled
-                // Snow can layer on top, so don't disable it
+        active: appWindow.showingSettings
+        visible: active
+        asynchronous: true
+        z: 10
+
+        sourceComponent: SettingsPage {
+            appWindow: pageStack.appWindow
+            mediaViewerItem: pageStack.mediaViewerItem  // Pass media viewer for blur capture
+            showingSettings: appWindow.showingSettings
+            accentColor: appWindow.accentColor
+            foregroundColor: appWindow.foregroundColor
+            dynamicColoringEnabled: appWindow.dynamicColoringEnabled
+            windowsAccentColorEnabled: appWindow.windowsAccentColorEnabled
+            gradientBackgroundEnabled: appWindow.gradientBackgroundEnabled
+            backdropBlurEnabled: appWindow.backdropBlurEnabled
+            ambientGradientEnabled: appWindow.ambientGradientEnabled
+            snowEffectEnabled: appWindow.snowEffectEnabled
+            badAppleEffectEnabled: appWindow.badAppleEffectEnabled
+            lyricsTranslationEnabled: appWindow.lyricsTranslationEnabled
+            lyricsTranslationApiKey: appWindow.lyricsTranslationApiKey
+            lyricsTranslationTargetLanguage: appWindow.lyricsTranslationTargetLanguage
+            appLanguage: appWindow.appLanguage
+            imageInterpolationMode: appWindow.imageInterpolationMode
+            dynamicResolutionEnabled: appWindow.dynamicResolutionEnabled
+            matchMediaAspectRatio: appWindow.matchMediaAspectRatio
+            autoHideTitleBar: appWindow.autoHideTitleBar
+            discordRPCEnabled: appWindow.discordRPCEnabled
+            coverArtSource: appWindow.coverArtSource
+            lastFMApiKey: appWindow.lastFMApiKey
+            debugConsoleEnabled: appWindow.debugConsoleEnabled
+            musicVideoMaxHeight: appWindow.musicVideoMaxHeight
+
+            onBackClicked: appWindow.showingSettings = false
+            onDynamicColoringToggled: function(enabled) {
+                appWindow.dynamicColoringEnabled = enabled
+                appWindow.updateAccentColor()
             }
-            appWindow.updateAccentColor()
-        }
-        onBackdropBlurToggled: function(enabled) {
-            appWindow.backdropBlurEnabled = enabled
-            if (enabled) {
-                appWindow.gradientBackgroundEnabled = false  // Disable gradient when backdrop blur is enabled
-                appWindow.ambientGradientEnabled = false  // Disable ambient gradient when backdrop blur is enabled
-                // Snow can layer on top, so don't disable it
+            onWindowsAccentColorToggled: function(enabled) {
+                appWindow.windowsAccentColorEnabled = enabled
+                appWindow.updateAccentColor()
             }
-        }
-        onAmbientGradientToggled: function(enabled) {
-            appWindow.ambientGradientEnabled = enabled
-            if (enabled) {
-                appWindow.gradientBackgroundEnabled = false  // Disable gradient when ambient gradient is enabled
-                appWindow.backdropBlurEnabled = false  // Disable backdrop blur when ambient gradient is enabled
-                // Snow can layer on top, so don't disable it
+            onGradientBackgroundToggled: function(enabled) {
+                appWindow.gradientBackgroundEnabled = enabled
+                if (enabled) {
+                    appWindow.backdropBlurEnabled = false
+                    appWindow.ambientGradientEnabled = false
+                }
+                appWindow.updateAccentColor()
             }
-        }
-        onSnowEffectToggled: function(enabled) {
-            appWindow.snowEffectEnabled = enabled
-            // Snow can layer on top of other effects, so no need to disable them
-        }
-        onBadAppleEffectToggled: function(enabled) {
-            appWindow.badAppleEffectEnabled = enabled
-            // Bad Apple replaces snow when enabled
-            if (enabled) {
-                appWindow.snowEffectEnabled = false
+            onBackdropBlurToggled: function(enabled) {
+                appWindow.backdropBlurEnabled = enabled
+                if (enabled) {
+                    appWindow.gradientBackgroundEnabled = false
+                    appWindow.ambientGradientEnabled = false
+                }
             }
-        }
-        onBadAppleEasterEggClicked: {
-            // Start Bad Apple easter egg
-            if (appWindow.startBadAppleEasterEgg) {
-                appWindow.startBadAppleEasterEgg()
-                // Show ESC to exit notification
-                badAppleEscNotification.show()
+            onAmbientGradientToggled: function(enabled) {
+                appWindow.ambientGradientEnabled = enabled
+                if (enabled) {
+                    appWindow.gradientBackgroundEnabled = false
+                    appWindow.backdropBlurEnabled = false
+                }
             }
-        }
-        onUndertaleEasterEggClicked: {
-            // Start Undertale fight easter egg
-            if (appWindow.startUndertaleFight) {
-                appWindow.startUndertaleFight()
+            onSnowEffectToggled: function(enabled) {
+                appWindow.snowEffectEnabled = enabled
             }
-        }
-        onLyricsTranslationToggled: function(enabled) {
-            appWindow.lyricsTranslationEnabled = enabled
-        }
-        onLyricsTranslationApiKeyEdited: function(apiKey) {
-            appWindow.lyricsTranslationApiKey = apiKey
-        }
-        onLyricsTranslationTargetLanguageEdited: function(language) {
-            appWindow.lyricsTranslationTargetLanguage = language
-        }
-        onAppLanguageEdited: function(language) {
-            appWindow.appLanguage = language
-            // Show message that restart is required
-            console.log("[App] Language changed to:", language, "- Please restart the application for changes to take effect")
-        }
-        onImageInterpolationModeSelected: function(smooth) {
-            appWindow.imageInterpolationMode = smooth
-        }
-        onDynamicResolutionToggled: function(enabled) {
-            console.log("[Settings] Dynamic resolution toggled:", enabled ? "ENABLED" : "DISABLED")
-            appWindow.dynamicResolutionEnabled = enabled
-            if (appWindow.logToDebugConsole) {
-                appWindow.logToDebugConsole("[Settings] Dynamic resolution " + (enabled ? "ENABLED" : "DISABLED"), "info")
+            onBadAppleEffectToggled: function(enabled) {
+                appWindow.badAppleEffectEnabled = enabled
+                if (enabled) {
+                    appWindow.snowEffectEnabled = false
+                }
             }
-        }
-        onMatchMediaAspectRatioToggled: function(enabled) {
-            appWindow.matchMediaAspectRatio = enabled
-            // If enabled, resize to current media if available
-            if (enabled && appWindow.currentImage !== "") {
-                Qt.callLater(function() {
-                    appWindow.resizeToMediaAspectRatio()
-                })
+            onBadAppleEasterEggClicked: {
+                if (appWindow.startBadAppleEasterEgg) {
+                    appWindow.startBadAppleEasterEgg()
+                    badAppleEscNotification.show()
+                }
             }
-        }
-        onAutoHideTitleBarToggled: function(enabled) {
-            appWindow.autoHideTitleBar = enabled
-        }
-        onDiscordRPCToggled: function(enabled) {
-            appWindow.discordRPCEnabled = enabled
-            // Update DiscordRPC component in AudioPlayer if available
-            // AudioPlayer has a discordRPCEnabled property that syncs with the DiscordRPC component
-            if (pageStack.audioPlayer) {
-                pageStack.audioPlayer.discordRPCEnabled = enabled
+            onUndertaleEasterEggClicked: {
+                if (appWindow.startUndertaleFight) {
+                    appWindow.startUndertaleFight()
+                }
             }
-        }
-        onCoverArtSourceSelected: function(source) {
-            appWindow.coverArtSource = source
-            // Update AudioPlayer if available
-            if (pageStack.audioPlayer) {
-                pageStack.audioPlayer.coverArtSource = source
+            onLyricsTranslationToggled: function(enabled) {
+                appWindow.lyricsTranslationEnabled = enabled
             }
-        }
-        onLastFMApiKeyEdited: function(apiKey) {
-            appWindow.lastFMApiKey = apiKey
-            // Update AudioPlayer if available
-            if (pageStack.audioPlayer) {
-                pageStack.audioPlayer.lastFMApiKey = apiKey
+            onLyricsTranslationApiKeyEdited: function(apiKey) {
+                appWindow.lyricsTranslationApiKey = apiKey
             }
-        }
-        onDebugConsoleToggled: function(enabled) {
-            appWindow.debugConsoleEnabled = enabled
-            console.log("[Settings] Debug console " + (enabled ? "ENABLED" : "DISABLED") + " - restart required")
+            onLyricsTranslationTargetLanguageEdited: function(language) {
+                appWindow.lyricsTranslationTargetLanguage = language
+            }
+            onAppLanguageEdited: function(language) {
+                appWindow.appLanguage = language
+                console.log("[App] Language changed to:", language, "- Please restart the application for changes to take effect")
+            }
+            onImageInterpolationModeSelected: function(smooth) {
+                appWindow.imageInterpolationMode = smooth
+            }
+            onDynamicResolutionToggled: function(enabled) {
+                console.log("[Settings] Dynamic resolution toggled:", enabled ? "ENABLED" : "DISABLED")
+                appWindow.dynamicResolutionEnabled = enabled
+                if (appWindow.logToDebugConsole) {
+                    appWindow.logToDebugConsole("[Settings] Dynamic resolution " + (enabled ? "ENABLED" : "DISABLED"), "info")
+                }
+            }
+            onMatchMediaAspectRatioToggled: function(enabled) {
+                appWindow.matchMediaAspectRatio = enabled
+                if (enabled && appWindow.currentImage !== "") {
+                    Qt.callLater(function() {
+                        appWindow.resizeToMediaAspectRatio()
+                    })
+                }
+            }
+            onAutoHideTitleBarToggled: function(enabled) {
+                appWindow.autoHideTitleBar = enabled
+            }
+            onDiscordRPCToggled: function(enabled) {
+                appWindow.discordRPCEnabled = enabled
+                if (pageStack.audioPlayer) {
+                    pageStack.audioPlayer.discordRPCEnabled = enabled
+                }
+            }
+            onCoverArtSourceSelected: function(source) {
+                appWindow.coverArtSource = source
+                if (pageStack.audioPlayer) {
+                    pageStack.audioPlayer.coverArtSource = source
+                }
+            }
+            onLastFMApiKeyEdited: function(apiKey) {
+                appWindow.lastFMApiKey = apiKey
+                if (pageStack.audioPlayer) {
+                    pageStack.audioPlayer.lastFMApiKey = apiKey
+                }
+            }
+            onDebugConsoleToggled: function(enabled) {
+                appWindow.debugConsoleEnabled = enabled
+                console.log("[Settings] Debug console " + (enabled ? "ENABLED" : "DISABLED") + " - restart required")
+            }
+            onMusicVideoMaxHeightSelected: function(h) {
+                appWindow.musicVideoMaxHeight = h
+            }
         }
     }
-    
+
     // Bad Apple ESC to exit notification - shown when Bad Apple starts
     Rectangle {
         id: badAppleEscNotification

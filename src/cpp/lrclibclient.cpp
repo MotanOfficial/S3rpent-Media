@@ -5,7 +5,6 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QRegularExpression>
-#include <QDebug>
 
 namespace {
 constexpr const char kReplySignatureProperty[] = "lrclibRequestSignature";
@@ -97,7 +96,6 @@ void LRCLibClient::fetchLyricsCached(const QString &trackName, const QString &ar
     request.setHeader(QNetworkRequest::UserAgentHeader, 
                      "s3rpent_media v0.1 (https://github.com/s3rpent/s3rpent_media)");
     
-    qDebug() << "[LRCLIB] Fetching cached lyrics:" << url.toString();
     QNetworkReply *reply = m_networkManager->get(request);
     tagReplyWithSignature(reply, requestSignature, true);
 }
@@ -122,7 +120,6 @@ void LRCLibClient::fetchLyricsById(int id)
     request.setHeader(QNetworkRequest::UserAgentHeader, 
                      "s3rpent_media v0.1 (https://github.com/s3rpent/s3rpent_media)");
     
-    qDebug() << "[LRCLIB] Fetching lyrics by ID:" << url.toString();
     QNetworkReply *reply = m_networkManager->get(request);
     tagReplyWithSignature(reply, requestSignature, true);
 }
@@ -163,7 +160,6 @@ void LRCLibClient::searchLyrics(const QString &query, const QString &trackName,
     request.setHeader(QNetworkRequest::UserAgentHeader, 
                      "s3rpent_media v0.1 (https://github.com/s3rpent/s3rpent_media)");
     
-    qDebug() << "[LRCLIB] Searching lyrics:" << url.toString();
     QNetworkReply *reply = m_networkManager->get(request);
     tagReplyWithSignature(reply, QStringLiteral("search:%1|%2|%3|%4")
                                    .arg(query, trackName, artistName, albumName),
@@ -173,7 +169,6 @@ void LRCLibClient::searchLyrics(const QString &query, const QString &trackName,
 void LRCLibClient::onReplyFinished(QNetworkReply *reply)
 {
     if (shouldIgnoreReply(reply)) {
-        qDebug() << "[LRCLIB] Ignoring stale lyrics reply";
         reply->deleteLater();
         return;
     }
@@ -229,7 +224,6 @@ void LRCLibClient::parseLyricsResponse(const QByteArray &data)
     
     // Check for error response
     if (obj.contains("code") && obj["code"].toInt() == 404) {
-        qDebug() << "[LRCLIB] Lyrics not found";
         setSyncedLyrics("");
         setPlainLyrics("");
         m_lyricLines.clear();
@@ -246,7 +240,6 @@ void LRCLibClient::parseLyricsResponse(const QByteArray &data)
     bool instrumental = obj["instrumental"].toBool(false);
 
     if (instrumental) {
-        qDebug() << "[LRCLIB] Track is instrumental";
         setSyncedLyrics("");
         setPlainLyrics("");
         m_lyricLines.clear();
@@ -269,7 +262,6 @@ void LRCLibClient::parseLyricsResponse(const QByteArray &data)
         emit lyricLinesChanged();
     }
 
-    qDebug() << "[LRCLIB] Lyrics fetched successfully. Lines:" << m_lyricLines.size();
     updateStatus(StatusLoaded, "Lyrics loaded",
                  { { "track", obj["trackName"].toString() },
                    { "artist", obj["artistName"].toString() },
@@ -354,7 +346,6 @@ void LRCLibClient::parseSearchResponse(const QByteArray &data)
             bool instrumental = bestMatch["instrumental"].toBool(false);
             
             if (instrumental) {
-                qDebug() << "[LRCLIB] Best match is instrumental";
                 setSyncedLyrics("");
                 setPlainLyrics("");
                 m_lyricLines.clear();
@@ -376,7 +367,6 @@ void LRCLibClient::parseSearchResponse(const QByteArray &data)
                 emit lyricLinesChanged();
             }
             
-            qDebug() << "[LRCLIB] Lyrics fetched successfully from search. Lines:" << m_lyricLines.size();
             updateStatus(StatusLoaded, "Lyrics loaded", successDetails);
             emit lyricsFetched(true);
             return;
@@ -385,7 +375,6 @@ void LRCLibClient::parseSearchResponse(const QByteArray &data)
                 return;
             }
             
-            qDebug() << "[LRCLIB] No matching results found after all attempts";
             QString failedTrack = m_searchTrackName;
             QString failedArtist = m_searchArtistName;
             QString failedAlbum = m_searchAlbumName;
@@ -414,7 +403,6 @@ void LRCLibClient::parseSearchResponse(const QByteArray &data)
         results.append(result);
     }
 
-    qDebug() << "[LRCLIB] Search returned" << results.size() << "results";
         emit searchResultsReceived(results);
         if (results.isEmpty()) {
             updateStatus(StatusNoMatch, "No matching lyrics found (manual search)");
@@ -667,7 +655,6 @@ void LRCLibClient::sendSearchRequest(SearchAttemptMode mode)
         { "attemptLabel", attemptLabel }
     };
     updateStatus(StatusSearching, "Searching lyrics", details);
-    qDebug() << "[LRCLIB] Searching lyrics (attempt" << attemptNumber << "-" << attemptLabel << "):" << url.toString();
     QNetworkReply *reply = m_networkManager->get(request);
     tagReplyWithSignature(reply, m_activeRequestSignature, true);
 }

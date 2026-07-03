@@ -10,6 +10,50 @@ find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Multimedia Network Wid
 find_package(Qt6 QUIET COMPONENTS Pdf PdfQuick)
 find_package(Qt6 QUIET COMPONENTS Quick3D Quick3DAssetUtils)
 find_package(LibArchive CONFIG QUIET)
+
+# Find libdatachannel for WebRTC P2P listen together feature
+# Try vcpkg package first (since we're using vcpkg toolchain)
+find_package(LibDataChannel CONFIG QUIET)
+if(LibDataChannel_FOUND)
+    set(LIBDATACHANNEL_FOUND TRUE)
+    message(STATUS "✅ libdatachannel found via vcpkg - WebRTC P2P enabled")
+else()
+    # Fallback: Try to find libdatachannel manually
+    find_path(LIBDATACHANNEL_INCLUDE_DIR
+        NAMES rtc/rtc.hpp
+        PATHS
+            /usr/include
+            /usr/local/include
+            "C:/libdatachannel/include"
+            "$ENV{LIBDATACHANNEL_DIR}/include"
+            "$ENV{VCPKG_ROOT}/installed/x64-windows/include"
+            "$ENV{VCPKG_ROOT}/installed/x86-windows/include"
+            "C:/vcpkg/installed/x64-windows/include"
+    )
+    
+    find_library(LIBDATACHANNEL_LIBRARY
+        NAMES datachannel libdatachannel
+        PATHS
+            /usr/lib
+            /usr/local/lib
+            "C:/libdatachannel/lib"
+            "$ENV{LIBDATACHANNEL_DIR}/lib"
+            "$ENV{VCPKG_ROOT}/installed/x64-windows/lib"
+            "$ENV{VCPKG_ROOT}/installed/x86-windows/lib"
+            "C:/vcpkg/installed/x64-windows/lib"
+    )
+    
+    if(LIBDATACHANNEL_INCLUDE_DIR AND LIBDATACHANNEL_LIBRARY)
+        set(LIBDATACHANNEL_FOUND TRUE)
+        set(LIBDATACHANNEL_INCLUDE_DIRS ${LIBDATACHANNEL_INCLUDE_DIR})
+        set(LIBDATACHANNEL_LIBRARIES ${LIBDATACHANNEL_LIBRARY})
+        message(STATUS "✅ libdatachannel found manually - WebRTC P2P enabled")
+        message(STATUS "  Include: ${LIBDATACHANNEL_INCLUDE_DIR}")
+        message(STATUS "  Library: ${LIBDATACHANNEL_LIBRARY}")
+    else()
+        message(STATUS "⚠️  libdatachannel not found - WebRTC P2P listen together feature will be disabled")
+    endif()
+endif()
 if(NOT LibArchive_FOUND)
     find_package(LibArchive QUIET)
 endif()
@@ -176,72 +220,72 @@ else()
 endif()
 
 # Try to find libmpv (optional - for HDR video playback)
+# Only enabled in debug/RelWithDebInfo builds, disabled in Release
 set(LIBMPV_FOUND FALSE)
 
-# Method 1: Try pkg-config (Linux/macOS)
-find_package(PkgConfig QUIET)
-if(PKG_CONFIG_FOUND)
-    pkg_check_modules(LIBMPV_PKG QUIET mpv)
-    if(LIBMPV_PKG_FOUND)
-        set(LIBMPV_FOUND TRUE)
-        set(LIBMPV_INCLUDE_DIR ${LIBMPV_PKG_INCLUDE_DIRS})
-        set(LIBMPV_LIBRARIES ${LIBMPV_PKG_LIBRARIES})
-        message(STATUS "✅ libmpv found via pkg-config - HDR video playback enabled")
-        message(STATUS "  Include: ${LIBMPV_INCLUDE_DIR}")
-        message(STATUS "  Libraries: ${LIBMPV_LIBRARIES}")
+# Only look for libmpv in non-Release builds
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+    # Method 1: Try pkg-config (Linux/macOS)
+    find_package(PkgConfig QUIET)
+    if(PKG_CONFIG_FOUND)
+        pkg_check_modules(LIBMPV_PKG QUIET mpv)
+        if(LIBMPV_PKG_FOUND)
+            set(LIBMPV_FOUND TRUE)
+            set(LIBMPV_INCLUDE_DIR ${LIBMPV_PKG_INCLUDE_DIRS})
+            set(LIBMPV_LIBRARIES ${LIBMPV_PKG_LIBRARIES})
+            message(STATUS "✅ libmpv found via pkg-config - HDR video playback enabled")
+            message(STATUS "  Include: ${LIBMPV_INCLUDE_DIR}")
+            message(STATUS "  Libraries: ${LIBMPV_LIBRARIES}")
+        endif()
     endif()
-endif()
 
-# Method 2: Manual find (fallback)
-if(NOT LIBMPV_FOUND)
-    find_path(LIBMPV_INCLUDE_DIR
-        NAMES mpv/client.h
-        PATHS
-            /usr/include
-            /usr/local/include
-            "C:/mpv/include"
-            "C:/Program Files/mpv/include"
-            "$ENV{MPV_DIR}/include"
-            "$ENV{VCPKG_ROOT}/installed/x64-windows/include"
-            "$ENV{VCPKG_ROOT}/installed/x64-windows-static/include"
-    )
-    
-    find_library(LIBMPV_LIBRARIES
-        NAMES mpv mpv-2 mpv2 libmpv libmpv-2
-        PATHS
-            /usr/lib
-            /usr/local/lib
-            "C:/mpv/lib"
-            "C:/mpv"
-            "C:/Program Files/mpv/lib"
-            "$ENV{MPV_DIR}/lib"
-            "$ENV{MPV_DIR}"
-            "$ENV{VCPKG_ROOT}/installed/x64-windows/lib"
-            "$ENV{VCPKG_ROOT}/installed/x64-windows-static/lib"
-    )
-    
-    # If .lib not found, try the generated one
-    if(NOT LIBMPV_LIBRARIES AND EXISTS "C:/mpv/lib/libmpv-2.lib")
-        set(LIBMPV_LIBRARIES "C:/mpv/lib/libmpv-2.lib")
-        message(STATUS "  Using generated import library")
+    # Method 2: Manual find (fallback)
+    if(NOT LIBMPV_FOUND)
+        find_path(LIBMPV_INCLUDE_DIR
+            NAMES mpv/client.h
+            PATHS
+                /usr/include
+                /usr/local/include
+                "C:/mpv/include"
+                "C:/Program Files/mpv/include"
+                "$ENV{MPV_DIR}/include"
+                "$ENV{VCPKG_ROOT}/installed/x64-windows/include"
+                "$ENV{VCPKG_ROOT}/installed/x64-windows-static/include"
+        )
+        
+        find_library(LIBMPV_LIBRARIES
+            NAMES mpv mpv-2 mpv2 libmpv libmpv-2
+            PATHS
+                /usr/lib
+                /usr/local/lib
+                "C:/mpv/lib"
+                "C:/mpv"
+                "C:/Program Files/mpv/lib"
+                "$ENV{MPV_DIR}/lib"
+                "$ENV{MPV_DIR}"
+                "$ENV{VCPKG_ROOT}/installed/x64-windows/lib"
+                "$ENV{VCPKG_ROOT}/installed/x64-windows-static/lib"
+        )
+        
+        # If .lib not found, try the generated one
+        if(NOT LIBMPV_LIBRARIES AND EXISTS "C:/mpv/lib/libmpv-2.lib")
+            set(LIBMPV_LIBRARIES "C:/mpv/lib/libmpv-2.lib")
+            message(STATUS "  Using generated import library")
+        endif()
+        
+        if(LIBMPV_INCLUDE_DIR AND LIBMPV_LIBRARIES)
+            set(LIBMPV_FOUND TRUE)
+            message(STATUS "✅ libmpv found manually - HDR video playback enabled")
+            message(STATUS "  Include: ${LIBMPV_INCLUDE_DIR}")
+            message(STATUS "  Libraries: ${LIBMPV_LIBRARIES}")
+        endif()
     endif()
     
-    if(LIBMPV_INCLUDE_DIR AND LIBMPV_LIBRARIES)
-        set(LIBMPV_FOUND TRUE)
-        message(STATUS "✅ libmpv found manually - HDR video playback enabled")
-        message(STATUS "  Include: ${LIBMPV_INCLUDE_DIR}")
-        message(STATUS "  Libraries: ${LIBMPV_LIBRARIES}")
+    if(NOT LIBMPV_FOUND)
+        message(STATUS "⚠️  libmpv not found - HDR video playback will be disabled")
     endif()
-endif()
-
-if(NOT LIBMPV_FOUND)
-    message(STATUS "⚠️  libmpv not found - HDR video playback will be disabled")
-    message(STATUS "")
-    message(STATUS "  To enable HDR video playback:")
-    message(STATUS "  • Linux:   sudo apt install libmpv-dev")
-    message(STATUS "  • macOS:   brew install mpv")
-    message(STATUS "  • Windows: Install via vcpkg: vcpkg install mpv")
-    message(STATUS "  • Manual:  Set MPV_DIR environment variable or install to standard paths")
+else()
+    message(STATUS "⚠️  libmpv disabled in Release build (debug builds only)")
 endif()
 
 # Fetch qlementine-icons library
@@ -252,13 +296,67 @@ FetchContent_Declare(qlementine-icons
 )
 FetchContent_MakeAvailable(qlementine-icons)
 
+# ---- Auto-download external dependencies (yt-dlp.exe and deno.exe) ----
+# These are runtime dependencies for YouTube playback and JS execution
+if(WIN32)
+    # Create a custom target to download dependencies before the main build
+    add_custom_target(download_dependencies
+        COMMENT "Downloading yt-dlp.exe and deno.exe..."
+    )
+
+    # Download yt-dlp.exe if not present
+    if(NOT EXISTS "${CMAKE_SOURCE_DIR}/yt-dlp.exe")
+        add_custom_command(TARGET download_dependencies PRE_BUILD
+            COMMAND ${CMAKE_COMMAND} -E echo "Downloading yt-dlp.exe from GitHub releases..."
+            COMMAND powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe' -OutFile '${CMAKE_SOURCE_DIR}/yt-dlp.exe' -UseBasicParsing"
+            COMMENT "Downloading yt-dlp.exe"
+        )
+    else()
+        add_custom_command(TARGET download_dependencies PRE_BUILD
+            COMMAND ${CMAKE_COMMAND} -E echo "yt-dlp.exe already exists, skipping download"
+        )
+    endif()
+
+    # Download deno.exe if not present (extract from zip)
+    if(NOT EXISTS "${CMAKE_SOURCE_DIR}/deno.exe")
+        add_custom_command(TARGET download_dependencies PRE_BUILD
+            COMMAND ${CMAKE_COMMAND} -E echo "Downloading deno v2.7.11 from GitHub releases..."
+            COMMAND powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri 'https://github.com/denoland/deno/releases/download/v2.7.11/deno-x86_64-pc-windows-msvc.zip' -OutFile '${CMAKE_SOURCE_DIR}/deno.zip' -UseBasicParsing"
+            COMMAND ${CMAKE_COMMAND} -E echo "Extracting deno.exe from zip..."
+            COMMAND powershell -ExecutionPolicy Bypass -Command "Expand-Archive -Path '${CMAKE_SOURCE_DIR}/deno.zip' -DestinationPath '${CMAKE_SOURCE_DIR}' -Force; Remove-Item '${CMAKE_SOURCE_DIR}/deno.zip' -Force"
+            COMMENT "Downloading and extracting deno.exe"
+        )
+    else()
+        add_custom_command(TARGET download_dependencies PRE_BUILD
+            COMMAND ${CMAKE_COMMAND} -E echo "deno.exe already exists, skipping download"
+        )
+    endif()
+
+    message(STATUS "Auto-download: yt-dlp.exe and deno.exe will be downloaded on first build if missing")
+    message(STATUS "  To download manually: .\\scripts\\download_dependencies.ps1")
+endif()
+
 # JUCE integration disabled - requires Direct2D headers not available with MinGW
 # The optimized custom audio processor provides excellent performance
 
 qt_standard_project_setup(REQUIRES 6.8)
 
+# Add dependency on download_dependencies target (if it exists) to ensure
+# external binaries are downloaded before building
+if(WIN32 AND TARGET download_dependencies)
+    set(DEPS_TARGET download_dependencies)
+else()
+    set(DEPS_TARGET "")
+endif()
+
 qt_add_executable(apps3rpent_media
     src/cpp/main.cpp
+    src/cpp/musicoverlaypositioner.cpp
+    src/cpp/musicoverlaypositioner.h
+    src/cpp/webrtclistentogethermanager.cpp
+    src/cpp/webrtclistentogethermanager.h
+    $<$<PLATFORM_ID:Windows>:src/cpp/windowsglobalhotkey.cpp>
+    $<$<PLATFORM_ID:Windows>:src/cpp/windowsglobalhotkey.h>
     src/cpp/colorutils.cpp
     src/cpp/colorutils.h
     src/cpp/windowmanager.cpp
@@ -280,6 +378,7 @@ qt_add_executable(apps3rpent_media
     src/cpp/customaudioprocessor.h
     src/cpp/customaudioplayer.cpp
     src/cpp/customaudioplayer.h
+    $<$<BOOL:${FFMPEG_FOUND}>:src/cpp/customaudioplayer_ffmpeg.cpp>
     src/cpp/windowsmediasession.cpp
     src/cpp/windowsmediasession.h
     $<$<PLATFORM_ID:Windows>:src/cpp/windowsmediasession_windows.cpp>
@@ -305,10 +404,19 @@ qt_add_executable(apps3rpent_media
     src/cpp/externaldraghelper.h
     src/cpp/modelsourceresolver.cpp
     src/cpp/modelsourceresolver.h
+    src/cpp/youtubeextractor.cpp
+    src/cpp/youtubeextractor.h
+    src/cpp/youtubeplaybackhelper.cpp
+    src/cpp/youtubeplaybackhelper.h
     $<$<BOOL:${FFMPEG_FOUND}>:src/cpp/ffmpegsubtitleextractor.cpp>
     $<$<BOOL:${FFMPEG_FOUND}>:src/cpp/ffmpegsubtitleextractor.h>
     $<$<BOOL:${FFMPEG_FOUND}>:src/cpp/ffmpegvideoplayer.cpp>
+    $<$<BOOL:${FFMPEG_FOUND}>:src/cpp/ffmpegvideoplayer_avdiag.cpp>
+    $<$<BOOL:${FFMPEG_FOUND}>:src/cpp/ffmpegvideoplayer_decode.cpp>
+    $<$<BOOL:${FFMPEG_FOUND}>:src/cpp/ffmpegvideoplayer_gpu.cpp>
+    $<$<BOOL:${FFMPEG_FOUND}>:src/cpp/ffmpegvideoplayer_process.cpp>
     $<$<BOOL:${FFMPEG_FOUND}>:src/cpp/ffmpegvideoplayer.h>
+    $<$<BOOL:${FFMPEG_FOUND}>:src/cpp/ffmpegvideoplayer_p.h>
     $<$<BOOL:${FFMPEG_FOUND}>:src/cpp/ffmpegvideorenderer.cpp>
     $<$<BOOL:${FFMPEG_FOUND}>:src/cpp/ffmpegvideorenderer.h>
     src/cpp/vlcvideoplayer.cpp
@@ -327,11 +435,46 @@ qt_add_executable(apps3rpent_media
     $<$<PLATFORM_ID:Windows>:resources/app.rc>
 )
 
+# Optional: ship yt-dlp next to the executable when it exists in the repo root (runtime also copies to AppData).
+if(WIN32 AND EXISTS "${CMAKE_SOURCE_DIR}/yt-dlp.exe")
+    add_custom_command(TARGET apps3rpent_media POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/yt-dlp.exe"
+            "$<TARGET_FILE_DIR:apps3rpent_media>/yt-dlp.exe"
+        COMMENT "Copy yt-dlp.exe beside the app (from project root)")
+endif()
+if(WIN32 AND EXISTS "${CMAKE_SOURCE_DIR}/deno.exe")
+    add_custom_command(TARGET apps3rpent_media POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/deno.exe"
+            "$<TARGET_FILE_DIR:apps3rpent_media>/deno.exe"
+        COMMENT "Copy deno.exe beside the app (from project root)")
+endif()
+if(UNIX AND EXISTS "${CMAKE_SOURCE_DIR}/yt-dlp")
+    add_custom_command(TARGET apps3rpent_media POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/yt-dlp"
+            "$<TARGET_FILE_DIR:apps3rpent_media>/yt-dlp"
+        COMMAND chmod +x "$<TARGET_FILE_DIR:apps3rpent_media>/yt-dlp"
+        COMMENT "Copy yt-dlp beside the app (from project root)")
+endif()
+
 # MSVC: Apply all RelWithDebInfo flags to target to prevent C1041 PDB lock errors
 # This MUST be done via target_compile_options, not add_compile_options,
 # because Qt's target properties override global compile options and Qt-generated
 # sources (MOC, QML cache, RCC) won't inherit /FS from add_compile_options()
 if (MSVC)
+    # RelWithDebInfo defaults already include /Ob1 and /Zi. We explicitly use
+    # /Ob2 and /Z7 below, so strip the defaults to avoid D9025 override noise.
+    if(CMAKE_CXX_FLAGS_RELWITHDEBINFO)
+        string(REPLACE "/Ob1" "" CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
+        string(REPLACE "/Zi"  "" CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
+    endif()
+    if(CMAKE_C_FLAGS_RELWITHDEBINFO)
+        string(REPLACE "/Ob1" "" CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS_RELWITHDEBINFO}")
+        string(REPLACE "/Zi"  "" CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS_RELWITHDEBINFO}")
+    endif()
+
     target_compile_options(apps3rpent_media PRIVATE
         $<$<CONFIG:RelWithDebInfo>:/O2>     # Full optimization
         $<$<CONFIG:RelWithDebInfo>:/Ob2>     # Inline aggressively
@@ -351,10 +494,11 @@ endif()
 
 set(QML_FILES
         src/qml/Main.qml
+        src/qml/MainVisuals.qml
+        src/qml/MusicPlayerOverlay.qml
+        src/qml/MusicVideoOverlay.qml
         src/qml/ImageViewer.qml
         src/qml/VideoPlayer.qml
-        src/qml/MPVVideoPlayerComponent.qml
-        src/qml/MPVVideoPlayerComponentD3D11.qml
         src/qml/AudioPlayer.qml
         src/qml/TitleBar.qml
         src/qml/MetadataPopup.qml
@@ -392,6 +536,9 @@ set(QML_FILES
         src/qml/MainContentArea.qml
         src/qml/BadAppleEffect.qml
         src/qml/UndertaleFight.qml
+        src/qml/ListenTogetherControl.qml
+        src/qml/ListenTogetherBridge.qml
+        src/qml/ListenTogetherPopup.qml
         src/js/FileTypeUtils.js
         src/js/MediaFormatUtils.js
         src/js/ImageNavigationUtils.js
@@ -409,6 +556,15 @@ set(QML_FILES
         src/js/WindowResizeFunctions.js
 )
 
+# Add MPV QML files only if libmpv is found (debug builds only)
+if(LIBMPV_FOUND)
+    list(APPEND QML_FILES
+        src/qml/MPVOpenGLVideoItemHost.qml
+        src/qml/MPVVideoPlayerComponent.qml
+        src/qml/MPVVideoPlayerComponentD3D11.qml
+    )
+endif()
+
 # Add PDF implementation only if PDF module is available
 if(TARGET Qt6::Pdf AND TARGET Qt6::PdfQuick)
     list(APPEND QML_FILES src/qml/PdfViewerImpl.qml)
@@ -424,6 +580,11 @@ qt_add_qml_module(apps3rpent_media
     QML_FILES ${QML_FILES}
     PREFIX src
 )
+
+# Ensure download_dependencies runs before building apps3rpent_media
+if(WIN32 AND TARGET download_dependencies)
+    add_dependencies(apps3rpent_media download_dependencies)
+endif()
 
 # Add shader files using qt_add_shaders
 # Attach directly to apps3rpent_media (same target that owns the QML module)
@@ -462,6 +623,8 @@ qt_add_resources(apps3rpent_media PRIVATE
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
 # If you are developing for iOS or macOS you should consider setting an
 # explicit, fixed bundle identifier manually though.
+target_compile_definitions(apps3rpent_media PRIVATE "S3RPENT_APP_VERSION=\"${PROJECT_VERSION}\"")
+
 set_target_properties(apps3rpent_media PROPERTIES
 #    MACOSX_BUNDLE_GUI_IDENTIFIER com.example.apps3rpent_media
     MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
@@ -481,12 +644,138 @@ else()
     else()
         message(STATUS "Building as console application (debug mode)")
     endif()
+    # Enable YouTube dialog shortcut in debug builds (Ctrl+Shift+Y)
+    target_compile_definitions(apps3rpent_media PRIVATE ENABLE_YOUTUBE_DIALOG=1)
+    message(STATUS "YouTube dialog shortcut enabled (debug build)")
 endif()
 
 target_link_libraries(apps3rpent_media
     PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia Qt6::Network Qt6::Widgets Qt6::OpenGLWidgets Qt6::ShaderTools Qt6::Concurrent
     PRIVATE Qt6::Gui
     PRIVATE Qt6::GuiPrivate
+)
+
+# Link libdatachannel if found
+if(LIBDATACHANNEL_FOUND)
+    if(LibDataChannel_FOUND)
+        # Use vcpkg package target
+        target_link_libraries(apps3rpent_media PRIVATE LibDataChannel::LibDataChannel)
+        target_compile_definitions(apps3rpent_media PRIVATE HAS_WEBRTC_P2P=1)
+        message(STATUS "WebRTC P2P listen together feature enabled via vcpkg")
+    elseif(LIBDATACHANNEL_LIBRARIES)
+        # Use manual library paths
+        target_link_libraries(apps3rpent_media PRIVATE ${LIBDATACHANNEL_LIBRARIES})
+        if(LIBDATACHANNEL_INCLUDE_DIRS)
+            target_include_directories(apps3rpent_media PRIVATE ${LIBDATACHANNEL_INCLUDE_DIRS})
+        endif()
+        target_compile_definitions(apps3rpent_media PRIVATE HAS_WEBRTC_P2P=1)
+        message(STATUS "WebRTC P2P listen together feature enabled")
+    endif()
+    
+    # Copy datachannel.dll to build directory (Windows only)
+    if(WIN32)
+        # Try all possible locations for datachannel.dll
+        set(DATACHANNEL_DLL_SEARCH_PATHS
+            "C:/vcpkg/installed/x64-windows/bin/datachannel.dll"
+            "C:/vcpkg/installed/x86-windows/bin/datachannel.dll"
+            "C:/libdatachannel/bin/datachannel.dll"
+        )
+        if(DEFINED ENV{LIBDATACHANNEL_DIR})
+            list(APPEND DATACHANNEL_DLL_SEARCH_PATHS "$ENV{LIBDATACHANNEL_DIR}/bin/datachannel.dll")
+        endif()
+        if(DEFINED ENV{VCPKG_ROOT})
+            list(APPEND DATACHANNEL_DLL_SEARCH_PATHS "$ENV{VCPKG_ROOT}/installed/x64-windows/bin/datachannel.dll")
+            list(APPEND DATACHANNEL_DLL_SEARCH_PATHS "$ENV{VCPKG_ROOT}/installed/x86-windows/bin/datachannel.dll")
+        endif()
+        
+        foreach(DLL_PATH ${DATACHANNEL_DLL_SEARCH_PATHS})
+            if(EXISTS "${DLL_PATH}")
+                add_custom_command(TARGET apps3rpent_media POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${DLL_PATH}"
+                    $<TARGET_FILE_DIR:apps3rpent_media>
+                    COMMENT "Copying datachannel.dll to build directory"
+                )
+                message(STATUS "  Will copy datachannel.dll from: ${DLL_PATH}")
+                break()
+            endif()
+        endforeach()
+        
+        # Copy juice.dll (libjuice signaling library - dependency of libdatachannel)
+        set(JUICE_DLL_SEARCH_PATHS
+            "C:/vcpkg/installed/x64-windows/bin/juice.dll"
+            "C:/vcpkg/installed/x86-windows/bin/juice.dll"
+            "C:/libdatachannel/bin/juice.dll"
+        )
+        if(DEFINED ENV{VCPKG_ROOT})
+            list(APPEND JUICE_DLL_SEARCH_PATHS "$ENV{VCPKG_ROOT}/installed/x64-windows/bin/juice.dll")
+            list(APPEND JUICE_DLL_SEARCH_PATHS "$ENV{VCPKG_ROOT}/installed/x86-windows/bin/juice.dll")
+        endif()
+        
+        foreach(DLL_PATH ${JUICE_DLL_SEARCH_PATHS})
+            if(EXISTS "${DLL_PATH}")
+                add_custom_command(TARGET apps3rpent_media POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${DLL_PATH}"
+                    $<TARGET_FILE_DIR:apps3rpent_media>
+                    COMMENT "Copying juice.dll to build directory"
+                )
+                message(STATUS "  Will copy juice.dll from: ${DLL_PATH}")
+                break()
+            endif()
+        endforeach()
+        
+        # Copy libssl-3-x64.dll (OpenSSL - dependency of libdatachannel for WebSocket support)
+        set(SSL_DLL_SEARCH_PATHS
+            "C:/vcpkg/installed/x64-windows/bin/libssl-3-x64.dll"
+            "C:/vcpkg/installed/x86-windows/bin/libssl-3.dll"
+            "C:/vcpkg/installed/x64-windows/bin/libssl-3.dll"
+        )
+        if(DEFINED ENV{VCPKG_ROOT})
+            list(APPEND SSL_DLL_SEARCH_PATHS "$ENV{VCPKG_ROOT}/installed/x64-windows/bin/libssl-3-x64.dll")
+            list(APPEND SSL_DLL_SEARCH_PATHS "$ENV{VCPKG_ROOT}/installed/x86-windows/bin/libssl-3.dll")
+        endif()
+        
+        foreach(DLL_PATH ${SSL_DLL_SEARCH_PATHS})
+            if(EXISTS "${DLL_PATH}")
+                add_custom_command(TARGET apps3rpent_media POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${DLL_PATH}"
+                    $<TARGET_FILE_DIR:apps3rpent_media>
+                    COMMENT "Copying libssl DLL to build directory"
+                )
+                message(STATUS "  Will copy libssl DLL from: ${DLL_PATH}")
+                break()
+            endif()
+        endforeach()
+        
+        # Copy libcrypto-3-x64.dll (OpenSSL crypto - dependency of libssl)
+        set(CRYPTO_DLL_SEARCH_PATHS
+            "C:/vcpkg/installed/x64-windows/bin/libcrypto-3-x64.dll"
+            "C:/vcpkg/installed/x86-windows/bin/libcrypto-3.dll"
+            "C:/vcpkg/installed/x64-windows/bin/libcrypto-3.dll"
+        )
+        if(DEFINED ENV{VCPKG_ROOT})
+            list(APPEND CRYPTO_DLL_SEARCH_PATHS "$ENV{VCPKG_ROOT}/installed/x64-windows/bin/libcrypto-3-x64.dll")
+            list(APPEND CRYPTO_DLL_SEARCH_PATHS "$ENV{VCPKG_ROOT}/installed/x86-windows/bin/libcrypto-3.dll")
+        endif()
+        
+        foreach(DLL_PATH ${CRYPTO_DLL_SEARCH_PATHS})
+            if(EXISTS "${DLL_PATH}")
+                add_custom_command(TARGET apps3rpent_media POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${DLL_PATH}"
+                    $<TARGET_FILE_DIR:apps3rpent_media>
+                    COMMENT "Copying libcrypto DLL to build directory"
+                )
+                message(STATUS "  Will copy libcrypto DLL from: ${DLL_PATH}")
+                break()
+            endif()
+        endforeach()
+    endif()
+endif()
+
+target_link_libraries(apps3rpent_media
     PRIVATE qlementine-icons
 )
 
@@ -523,22 +812,28 @@ endif()
 # ---- Qt private headers (QRhi) ----
 # Required for: #include <QtGui/private/qrhi_p.h>
 # On Windows, Qt does NOT export private include paths properly in INTERFACE_INCLUDE_DIRECTORIES.
-# We must add the versioned QtGui include directories manually.
-# Note: We need TWO include roots:
-#   1) include/QtGui/6.10.1 - for <QtGui/private/qrhi_p.h> (resolves to include/QtGui/6.10.1/QtGui/private/qrhi_p.h)
-#   2) include/QtGui/6.10.1/QtGui - for <rhi/qrhi.h> (included by qrhi_p.h, resolves to include/QtGui/6.10.1/QtGui/rhi/qrhi.h)
+# We must add the versioned QtGui include directories manually, based on the Qt
+# installation selected by CMake (CMAKE_PREFIX_PATH / Qt6_DIR), not hardcoded paths.
 
-set(QT_ROOT "C:/Qt/6.10.1/msvc2022_64")
+if(NOT DEFINED Qt6_VERSION OR Qt6_VERSION STREQUAL "")
+    message(FATAL_ERROR "Qt6_VERSION is not available after find_package(Qt6 ...).")
+endif()
 
-set(QT_PRIVATE_QTGUI_VERSIONED_DIR
-    "${QT_ROOT}/include/QtGui/6.10.1"
-)
+# Determine Qt install root from Qt6_DIR:
+# e.g. .../msvc2022_64/lib/cmake/Qt6 -> .../msvc2022_64
+if(NOT DEFINED Qt6_DIR OR Qt6_DIR STREQUAL "")
+    message(FATAL_ERROR "Qt6_DIR is not set. Cannot resolve Qt install root for QRhi headers.")
+endif()
 
-set(QT_PRIVATE_QTGUI_FULL_DIR
-    "${QT_ROOT}/include/QtGui/6.10.1/QtGui"
-)
+get_filename_component(_qt6_cmake_pkg_dir "${Qt6_DIR}" ABSOLUTE)
+get_filename_component(_qt6_cmake_dir "${_qt6_cmake_pkg_dir}" DIRECTORY)
+get_filename_component(_qt6_lib_dir "${_qt6_cmake_dir}" DIRECTORY)
+get_filename_component(QT_ROOT "${_qt6_lib_dir}" DIRECTORY)
 
-if (
+set(QT_PRIVATE_QTGUI_VERSIONED_DIR "${QT_ROOT}/include/QtGui/${Qt6_VERSION}")
+set(QT_PRIVATE_QTGUI_FULL_DIR "${QT_PRIVATE_QTGUI_VERSIONED_DIR}/QtGui")
+
+if(
     EXISTS "${QT_PRIVATE_QTGUI_FULL_DIR}/private/qrhi_p.h"
     AND EXISTS "${QT_PRIVATE_QTGUI_FULL_DIR}/rhi/qrhi.h"
 )
@@ -548,6 +843,8 @@ if (
     )
 
     message(STATUS "Using Qt QRhi headers")
+    message(STATUS "  Qt version: ${Qt6_VERSION}")
+    message(STATUS "  Qt root: ${QT_ROOT}")
     message(STATUS "  QtGui versioned include: ${QT_PRIVATE_QTGUI_VERSIONED_DIR}")
     message(STATUS "  QtGui full include: ${QT_PRIVATE_QTGUI_FULL_DIR}")
 else()

@@ -5,6 +5,26 @@
  * Utility functions for debug logging and performance tracking
  */
 
+function safeUrlString(url) {
+    if (!url || url === "")
+        return ""
+    const s = url.toString()
+    try {
+        return decodeURIComponent(s)
+    } catch (e) {
+        return s
+    }
+}
+
+function fileBasename(urlOrString) {
+    const s = safeUrlString(urlOrString)
+    if (!s)
+        return ""
+    const norm = s.replace(/\\/g, "/")
+    const parts = norm.split("/")
+    return parts[parts.length - 1] || norm
+}
+
 /**
  * Log a message to both console and debug console
  * @param {string} message - Message to log
@@ -12,22 +32,16 @@
  * @param {Object} debugConsole - Reference to debug console object
  */
 function logToDebugConsole(message, type, debugConsole) {
-    // Always log to regular console first
-    console.log(message)
-    
-    // Try to log to debug console if available
+    // Keep console quiet when debug console is disabled.
+    // Only forward messages if a debug console is actually connected.
     if (debugConsole) {
         try {
             if (typeof debugConsole.addLog === "function") {
                 debugConsole.addLog(message, type || "info")
-            } else {
-                console.log("[Debug] debugConsole.addLog not available")
             }
         } catch (e) {
-            console.log("[Debug] Error logging to console:", e)
+            // Ignore logging failures in production paths.
         }
-    } else {
-        console.log("[Debug] debugConsole is null")
     }
 }
 
@@ -35,9 +49,10 @@ function logToDebugConsole(message, type, debugConsole) {
  * Start a load timer for performance tracking
  * @param {string} typeLabel - Type of media being loaded (e.g., "Image", "Video")
  * @param {url} currentImage - Current image/media URL
+ * @param {function} logToDebugConsoleFn - Optional (message, type) for in-app debug console
  * @returns {Object} Object with loadStartTime, pendingLoadSource, and pendingLoadType
  */
-function startLoadTimer(typeLabel, currentImage) {
+function startLoadTimer(typeLabel, currentImage, logToDebugConsoleFn, consoleEnabled) {
     if (!currentImage || currentImage === "") {
         return {
             loadStartTime: 0,
@@ -49,7 +64,15 @@ function startLoadTimer(typeLabel, currentImage) {
     const loadStartTime = Date.now()
     const pendingLoadSource = currentImage
     const pendingLoadType = typeLabel || "Unknown"
-    const message = "[Load] Started " + pendingLoadType + " for " + decodeURIComponent(currentImage.toString())
+    const name = fileBasename(currentImage)
+    const message = "[Load] Started " + pendingLoadType + (name ? " - " + name : "")
+    
+    if (consoleEnabled) {
+        console.log(message)
+    }
+    if (typeof logToDebugConsoleFn === "function") {
+        logToDebugConsoleFn(message, "info")
+    }
     
     return {
         loadStartTime: loadStartTime,
@@ -64,10 +87,10 @@ function startLoadTimer(typeLabel, currentImage) {
  * @param {string} statusLabel - Status label (e.g., "Image ready", "Video ready")
  * @param {url} sourceUrl - Source URL that was loaded
  * @param {Object} loadTimerData - Object from startLoadTimer with loadStartTime, pendingLoadSource, pendingLoadType
- * @param {function} logToDebugConsole - Function to log to debug console
+ * @param {function} logToDebugConsoleFn - Optional (message, type) for in-app debug console
  * @returns {Object} Updated load timer data (with cleared values)
  */
-function logLoadDuration(statusLabel, sourceUrl, loadTimerData, logToDebugConsole) {
+function logLoadDuration(statusLabel, sourceUrl, loadTimerData, logToDebugConsoleFn, consoleEnabled) {
     if (!loadTimerData || !loadTimerData.loadStartTime) {
         return loadTimerData || { loadStartTime: 0, pendingLoadSource: "", pendingLoadType: "" }
     }
@@ -80,12 +103,15 @@ function logLoadDuration(statusLabel, sourceUrl, loadTimerData, logToDebugConsol
     }
     
     const elapsed = Date.now() - loadTimerData.loadStartTime
+    const name = fileBasename(targetUrl)
     const message = "[Load] " + statusLabel + " in " + elapsed + " ms (" + loadTimerData.pendingLoadType + ")"
+            + (name ? " - " + name : "")
     
-    if (logToDebugConsole) {
-        logToDebugConsole(message, "info")
-    } else {
+    if (consoleEnabled) {
         console.log(message)
+    }
+    if (typeof logToDebugConsoleFn === "function") {
+        logToDebugConsoleFn(message, "info")
     }
     
     // Return cleared timer data

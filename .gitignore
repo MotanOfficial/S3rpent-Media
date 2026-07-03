@@ -62,3 +62,24 @@ libvlc
 mpc-qt-master
 examples
 applogs.txt
+
+# Downloaded binaries
+yt-dlp.exe
+deno.exe
+deno.zip
+
+# Node.js (webrtc-signaling — run npm install locally)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.vercel
+.env
+.env.*
+!.env.example
+
+# Local scratch / backup copies (not for the repo)
+src/cpp/backup/
+src/cpp/*_broken*.cpp
+src/cpp/*_broken*.h

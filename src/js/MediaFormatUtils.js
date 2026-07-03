@@ -49,17 +49,32 @@ function getMetadataList(params) {
     const list = []
     const qsTr = params.qsTr || function(s) { return s }
     
-    // File name
-    const fileName = decodedPath.split(/[/\\]/).pop()
-    list.push({ label: qsTr("File Name"), value: fileName })
-    
-    // File path (truncated if too long)
-    const displayPath = decodedPath.length > 60 ? "..." + decodedPath.slice(-57) : decodedPath
-    list.push({ label: qsTr("File Path"), value: displayPath })
-    
-    // File extension
-    const extension = fileName.split('.').pop().toUpperCase()
-    list.push({ label: qsTr("File Format"), value: extension })
+    const curStr = params.currentImage.toString()
+    const isGoogleAudio = params.isAudio && curStr.indexOf("googlevideo.com") >= 0
+    const streamMeta = isGoogleAudio && !!(params.streamOverrideTitle || params.streamOverrideArtist || params.streamWatchUrl)
+
+    if (streamMeta) {
+        list.push({ label: qsTr("Media Type"), value: qsTr("Audio") })
+        if (params.streamOverrideTitle)
+            list.push({ label: qsTr("Title"), value: params.streamOverrideTitle })
+        if (params.streamOverrideArtist)
+            list.push({ label: qsTr("Artist"), value: params.streamOverrideArtist })
+        if (params.streamWatchUrl)
+            list.push({ label: qsTr("YouTube"), value: params.streamWatchUrl })
+        list.push({ label: qsTr("Source"), value: qsTr("Streaming (yt-dlp)") })
+    } else {
+        // File name
+        const fileName = decodedPath.split(/[/\\]/).pop()
+        list.push({ label: qsTr("File Name"), value: fileName })
+        
+        // File path (truncated if too long)
+        const displayPath = decodedPath.length > 60 ? "..." + decodedPath.slice(-57) : decodedPath
+        list.push({ label: qsTr("File Path"), value: displayPath })
+        
+        // File extension
+        const extension = fileName.split('.').pop().toUpperCase()
+        list.push({ label: qsTr("File Format"), value: extension })
+    }
     
     // Helper function to safely get metadata
     function getMeta(metaData, key) {
@@ -181,7 +196,8 @@ function getMetadataList(params) {
             }
         }
     } else if (params.isAudio) {
-        list.push({ label: qsTr("Media Type"), value: qsTr("Audio") })
+        if (!streamMeta)
+            list.push({ label: qsTr("Media Type"), value: qsTr("Audio") })
         
         // Duration - try to get from C++ helper first (instant), fallback to audioPlayer
         let duration = 0
@@ -262,15 +278,19 @@ function getMetadataList(params) {
             }
             
             // Title
-            const title = getMeta(metaData, MediaMetaData.Title) || getMeta(metaData, "Title")
-            if (title) {
-                list.push({ label: qsTr("Title"), value: String(title) })
+            if (!streamMeta) {
+                const title = getMeta(metaData, MediaMetaData.Title) || getMeta(metaData, "Title")
+                if (title) {
+                    list.push({ label: qsTr("Title"), value: String(title) })
+                }
             }
             
             // Contributing Artists
-            const contributingArtists = getMeta(metaData, MediaMetaData.ContributingArtist) || getMeta(metaData, "ContributingArtist") || getMeta(metaData, "Artist")
-            if (contributingArtists) {
-                list.push({ label: qsTr("Contributing Artists"), value: String(contributingArtists) })
+            if (!streamMeta) {
+                const contributingArtists = getMeta(metaData, MediaMetaData.ContributingArtist) || getMeta(metaData, "ContributingArtist") || getMeta(metaData, "Artist")
+                if (contributingArtists) {
+                    list.push({ label: qsTr("Contributing Artists"), value: String(contributingArtists) })
+                }
             }
             
             // Album Artist

@@ -5,7 +5,6 @@ ShaderEffect {
     id: ambientGradient
     
     property var paletteColors: []  // Array of colors from palette extraction
-    property bool enabled: true
     property real speed: 0.01  // Animation speed (Spotify-slow)
     property real distortion: 0.15  // Distortion amount (more organic variation)
     property real effectOpacity: 0.8  // Overall opacity (increased for visibility)

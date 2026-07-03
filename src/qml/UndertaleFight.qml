@@ -8,7 +8,7 @@ import QtMultimedia
 Item {
     id: undertaleFight
     
-    property bool enabled: false
+    enabled: false
     property var appWindow: null  // Reference to main window for fullscreen
     property var titleBar: null  // Reference to titlebar to disable auto-hide
     

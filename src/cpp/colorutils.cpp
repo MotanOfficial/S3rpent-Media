@@ -4,6 +4,8 @@
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
+#include <dwmapi.h>
+#pragma comment(lib, "dwmapi.lib")
 #endif
 
 #include <QFileInfo>
@@ -27,6 +29,10 @@
 #include <QtMath>
 #include <QVector>
 #include <QRandomGenerator>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QScopedPointer>
 #include <cmath>
 #include <limits>
 #include <QProcess>
@@ -70,33 +76,90 @@ static constexpr int BAD_APPLE_FRAME_COUNT = 6572;
 static constexpr int BAD_APPLE_FRAME_BYTES = (BAD_APPLE_FRAME_WIDTH * BAD_APPLE_FRAME_HEIGHT + 7) / 8; // Bytes per frame (rounded up)
 }
 
+/** Load and downscale image for palette/dominant extraction; supports http(s) thumbnails (e.g. YouTube). */
+static QImage loadImageForColorExtraction(const QUrl &sourceUrl, int maxSide)
+{
+    if (sourceUrl.isEmpty())
+        return QImage();
+
+    if (sourceUrl.isLocalFile()) {
+        const QString path = sourceUrl.toLocalFile();
+        if (!QFileInfo::exists(path))
+            return QImage();
+        QImageReader reader(path);
+        reader.setAutoTransform(true);
+        QSize size = reader.size();
+        if (!size.isValid()) {
+            size = QSize(maxSide, maxSide);
+        } else {
+            size.scale(maxSide, maxSide, Qt::KeepAspectRatio);
+        }
+        reader.setScaledSize(size);
+        return reader.read();
+    }
+
+    const QString scheme = sourceUrl.scheme().toLower();
+    if (scheme == QLatin1String("http") || scheme == QLatin1String("https")) {
+        QNetworkAccessManager nam;
+        QNetworkRequest req(sourceUrl);
+        req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("S3rpentMedia/1.0"));
+        req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+        QScopedPointer<QNetworkReply> reply(nam.get(req));
+        QEventLoop loop;
+        QObject::connect(reply.data(), &QNetworkReply::finished, &loop, &QEventLoop::quit);
+        QTimer::singleShot(20000, &loop, &QEventLoop::quit);
+        loop.exec();
+        if (reply->error() != QNetworkReply::NoError)
+            return QImage();
+        const QByteArray data = reply->readAll();
+        if (data.isEmpty())
+            return QImage();
+        QImage img;
+        if (!img.loadFromData(data))
+            return QImage();
+        return img.scaled(maxSide, maxSide, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+
+    const QString legacyPath = sourceUrl.toString(QUrl::PreferLocalFile);
+    if (!legacyPath.isEmpty() && QFileInfo::exists(legacyPath)) {
+        QImageReader reader(legacyPath);
+        reader.setAutoTransform(true);
+        QSize size = reader.size();
+        if (!size.isValid()) {
+            size = QSize(maxSide, maxSide);
+        } else {
+            size.scale(maxSide, maxSide, Qt::KeepAspectRatio);
+        }
+        reader.setScaledSize(size);
+        return reader.read();
+    }
+    return QImage();
+}
+
 ColorUtils::ColorUtils(QObject *parent)
     : QObject(parent)
 {
 }
 
+QColor ColorUtils::windowsAccentColor() const
+{
+#ifdef Q_OS_WIN
+    DWORD colorization = 0;
+    BOOL opaqueBlend = FALSE;
+    // DwmGetColorizationColor returns 0xAARRGGBB; COLORREF macros (GetRValue etc.) expect 0x00BBGGRR.
+    if (SUCCEEDED(DwmGetColorizationColor(&colorization, &opaqueBlend))) {
+        const int r = static_cast<int>((colorization >> 16) & 0xFF);
+        const int g = static_cast<int>((colorization >> 8) & 0xFF);
+        const int b = static_cast<int>(colorization & 0xFF);
+        return QColor(r, g, b);
+    }
+#endif
+    return QColor();
+}
+
 QColor ColorUtils::dominantColor(const QUrl &sourceUrl) const
 {
-    const QString localPath = sourceUrl.isLocalFile()
-            ? sourceUrl.toLocalFile()
-            : sourceUrl.toString(QUrl::PreferLocalFile);
-
-    if (localPath.isEmpty() || !QFileInfo::exists(localPath))
-        return QColor(kFallbackColor);
-
-    QImageReader reader(localPath);
-    reader.setAutoTransform(true);
-    
-    // Downscale to ~50x50 for faster computation
-    QSize size = reader.size();
-    if (!size.isValid()) {
-        size = QSize(50, 50);
-    } else {
-        size.scale(50, 50, Qt::KeepAspectRatio);
-    }
-    reader.setScaledSize(size);
-
-    QImage image = reader.read();
+    QImage image = loadImageForColorExtraction(sourceUrl, 50);
     if (image.isNull())
         return QColor(kFallbackColor);
 
@@ -281,26 +344,7 @@ QVariantList ColorUtils::extractPaletteColors(const QUrl &sourceUrl, int count) 
 {
     QVariantList result;
     
-    const QString localPath = sourceUrl.isLocalFile()
-            ? sourceUrl.toLocalFile()
-            : sourceUrl.toString(QUrl::PreferLocalFile);
-
-    if (localPath.isEmpty() || !QFileInfo::exists(localPath))
-        return result;
-
-    QImageReader reader(localPath);
-    reader.setAutoTransform(true);
-    
-    // Downscale to ~80x80 for faster computation (smaller = faster, still enough for color extraction)
-    QSize size = reader.size();
-    if (!size.isValid()) {
-        size = QSize(80, 80);
-    } else {
-        size.scale(80, 80, Qt::KeepAspectRatio);
-    }
-    reader.setScaledSize(size);
-
-    QImage image = reader.read();
+    QImage image = loadImageForColorExtraction(sourceUrl, 80);
     if (image.isNull())
         return result;
 
@@ -770,13 +814,8 @@ QVariantMap ColorUtils::getAudioFormatInfo(const QUrl &audioUrl, qint64 duration
             const int bitRate = static_cast<int>(bits / seconds);
             if (bitRate > 0) {
                 result["bitrate"] = bitRate;
-                qDebug() << "[AudioFormat] Calculated bitrate:" << bitRate << "bps from file size:" << fileBytes << "bytes, duration:" << durationMs << "ms";
             }
-        } else {
-            qDebug() << "[AudioFormat] Cannot calculate bitrate - fileBytes:" << fileBytes << "seconds:" << seconds;
         }
-    } else {
-        qDebug() << "[AudioFormat] Cannot calculate bitrate - durationMs is 0 or invalid:" << durationMs;
     }
 
     // 2. Decode a tiny chunk using QAudioDecoder to inspect the PCM format (for sample rate)
@@ -794,7 +833,6 @@ QVariantMap ColorUtils::getAudioFormatInfo(const QUrl &audioUrl, qint64 duration
                 if (rate > 0) {
                     result["sampleRate"] = rate;
                     sampleRateFound = true;
-                    qDebug() << "[AudioFormat] Extracted sample rate:" << rate << "Hz from audio buffer";
                     decoder.stop();
                     loop.quit();
                 }
@@ -802,7 +840,6 @@ QVariantMap ColorUtils::getAudioFormatInfo(const QUrl &audioUrl, qint64 duration
         });
         QObject::connect(&decoder, &QAudioDecoder::finished, [&]() {
             if (!sampleRateFound) {
-                qDebug() << "[AudioFormat] Decoder finished but sample rate not found";
                 loop.quit();
             }
         });
@@ -813,7 +850,6 @@ QVariantMap ColorUtils::getAudioFormatInfo(const QUrl &audioUrl, qint64 duration
         errorCheckTimer.setInterval(100);
         QObject::connect(&errorCheckTimer, &QTimer::timeout, [&]() {
             if (decoder.error() != QAudioDecoder::NoError) {
-                qDebug() << "[AudioFormat] Decoder error:" << decoder.error() << decoder.errorString();
                 loop.quit();
             }
         });
@@ -826,10 +862,6 @@ QVariantMap ColorUtils::getAudioFormatInfo(const QUrl &audioUrl, qint64 duration
             errorCheckTimer.stop();
         }
         decoder.stop();
-        
-        if (!sampleRateFound && result["sampleRate"].toInt() == 0) {
-            qDebug() << "[AudioFormat] Failed to extract sample rate from audio decoder";
-        }
     }
 
     return result;
@@ -1088,6 +1120,42 @@ QVariantList ColorUtils::getImagesInDirectory(const QUrl &fileUrl) const
         return a.lastModified() > b.lastModified();
     });
     
+    for (const QFileInfo &fi : files) {
+        result.append(QUrl::fromLocalFile(fi.absoluteFilePath()));
+    }
+
+    return result;
+}
+
+QVariantList ColorUtils::getAudioFilesInDirectory(const QUrl &fileUrl) const
+{
+    QVariantList result;
+
+    const QString localPath = fileUrl.isLocalFile()
+            ? fileUrl.toLocalFile()
+            : fileUrl.toString(QUrl::PreferLocalFile);
+
+    if (localPath.isEmpty())
+        return result;
+
+    QFileInfo fileInfo(localPath);
+    QDir dir = fileInfo.absoluteDir();
+
+    if (!dir.exists())
+        return result;
+
+    // Audio extensions to look for
+    QStringList audioExtensions;
+    audioExtensions << "*.mp3" << "*.wav" << "*.flac" << "*.ogg" << "*.aac" << "*.m4a" << "*.wma" << "*.opus" << "*.mp2" << "*.mp1" << "*.amr"
+                    << "*.MP3" << "*.WAV" << "*.FLAC" << "*.OGG" << "*.AAC" << "*.M4A" << "*.WMA" << "*.OPUS" << "*.MP2" << "*.MP1" << "*.AMR";
+
+    QFileInfoList files = dir.entryInfoList(audioExtensions, QDir::Files);
+
+    // Sort by modification time descending (newest first) to match image behavior
+    std::sort(files.begin(), files.end(), [](const QFileInfo &a, const QFileInfo &b) {
+        return a.lastModified() > b.lastModified();
+    });
+
     for (const QFileInfo &fi : files) {
         result.append(QUrl::fromLocalFile(fi.absoluteFilePath()));
     }

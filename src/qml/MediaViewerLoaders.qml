@@ -336,6 +336,7 @@ Item {
         id: videoPlayerLoader
         anchors.fill: parent
         active: false
+        asynchronous: true
         visible: appWindow ? (appWindow.isVideo && appWindow.currentImage !== "") : false
         
         onItemChanged: {
@@ -622,6 +623,7 @@ Item {
         id: audioPlayerLoader
         anchors.fill: parent
         active: false
+        asynchronous: true
         visible: appWindow ? (appWindow.isAudio && appWindow.currentImage !== "") : false
         
         onItemChanged: {
@@ -680,24 +682,27 @@ Item {
                         if (Math.abs(audioPlayer.duration - lastDuration) > 100) {
                             win.lastAudioDuration = audioPlayer.duration
                             win.logLoadDuration("Audio ready", audioPlayer.source)
-                            // Get format info with the actual duration (async to avoid blocking)
+                            // getAudioFormatInfo runs a sync QAudioDecoder + event loop — defer so UI stays responsive
                             Qt.callLater(function() {
-                                if (win) win.getAudioFormatInfo(audioPlayer.duration)
+                                Qt.callLater(function() {
+                                    if (win) win.getAudioFormatInfo(audioPlayer.duration)
+                                })
                             })
                             // Extract cover art when duration is available (metadata should be ready)
                             win.extractAudioCoverArt()
-                            // Always refresh metadata list when duration is available
                             Qt.callLater(function() {
-                                if (win) {
-                                    // Try to update through MetadataPopupManager first (preferred)
-                                    if (mediaViewerLoaders.metadataPopupManager && 
-                                        typeof mediaViewerLoaders.metadataPopupManager.updateMetadataList === "function") {
-                                        mediaViewerLoaders.metadataPopupManager.updateMetadataList()
-                                    } else if (mediaViewerLoaders.metadataPopup) {
-                                        // Fallback: direct update (for backwards compatibility)
-                                        mediaViewerLoaders.metadataPopup.metadataList = win.getMetadataList()
-                                    } else {
-                                    }
+                                if (!win)
+                                    return
+                                if (typeof audioPlayer.attemptMetadataRefresh === "function")
+                                    audioPlayer.attemptMetadataRefresh("duration-available")
+                                if (mediaViewerLoaders.metadataPopupManager
+                                        && typeof mediaViewerLoaders.metadataPopupManager.refreshAudioPlayerMetadata === "function") {
+                                    mediaViewerLoaders.metadataPopupManager.refreshAudioPlayerMetadata("duration-available")
+                                } else if (mediaViewerLoaders.metadataPopupManager
+                                           && typeof mediaViewerLoaders.metadataPopupManager.updateMetadataList === "function") {
+                                    mediaViewerLoaders.metadataPopupManager.updateMetadataList()
+                                } else if (mediaViewerLoaders.metadataPopup) {
+                                    mediaViewerLoaders.metadataPopup.metadataList = win.getMetadataList()
                                 }
                             })
                         }
@@ -709,6 +714,14 @@ Item {
                     target: audioPlayer
                     property: "coverArt"
                     value: mediaViewerLoaders.appWindow ? mediaViewerLoaders.appWindow.audioCoverArt : ""
+                    when: mediaViewerLoaders.appWindow ? true : false
+                }
+
+                // Binding to keep music video stream URL in sync with appWindow.audioVideoStreamUrl
+                Binding {
+                    target: audioPlayer
+                    property: "musicVideoSource"
+                    value: mediaViewerLoaders.appWindow ? mediaViewerLoaders.appWindow.audioVideoStreamUrl : ""
                     when: mediaViewerLoaders.appWindow ? true : false
                 }
                 
@@ -725,6 +738,18 @@ Item {
                     target: audioPlayer
                     property: "foregroundColor"
                     value: mediaViewerLoaders.appWindow ? mediaViewerLoaders.appWindow.foregroundColor : "#f5f5f5"
+                    when: mediaViewerLoaders.appWindow ? true : false
+                }
+
+                Binding {
+                    target: audioPlayer
+                    property: "webRTCManager"
+                    value: {
+                        const win = mediaViewerLoaders.appWindow
+                        if (!win || !win.listenTogetherBridge)
+                            return null
+                        return win.listenTogetherBridge.manager
+                    }
                     when: mediaViewerLoaders.appWindow ? true : false
                 }
                 
@@ -905,6 +930,7 @@ Item {
         id: pdfViewerLoader
         anchors.fill: parent
         active: false
+        asynchronous: true
         visible: appWindow ? (appWindow.isPdf && appWindow.currentImage !== "") : false
         
         onItemChanged: {
@@ -969,6 +995,7 @@ Item {
         id: zipViewerLoader
         anchors.fill: parent
         active: false
+        asynchronous: true
         visible: appWindow ? (appWindow.isZip && appWindow.currentImage !== "") : false
 
         onItemChanged: {
@@ -1031,6 +1058,7 @@ Item {
         id: modelViewerLoader
         anchors.fill: parent
         active: false
+        asynchronous: true
         visible: appWindow ? (appWindow.isModel && appWindow.currentImage !== "") : false
 
         onItemChanged: {

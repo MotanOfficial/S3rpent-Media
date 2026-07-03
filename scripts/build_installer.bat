@@ -5,8 +5,16 @@ REM ========================================
 REM   S3rpent Media - Installer Builder
 REM ========================================
 
-set "PROJECT_DIR=C:\Users\Motan\Documents\s3rpent_media"
-set "RELEASE_DIR=%PROJECT_DIR%\build\Release"
+set "SCRIPT_DIR=%~dp0"
+set "PROJECT_DIR=%SCRIPT_DIR%.."
+
+REM Check for short build directory first (G:\b\s3_rel), fallback to project-relative
+if exist "G:\b\s3_rel\apps3rpent_media.exe" (
+    set "RELEASE_DIR=G:\b\s3_rel"
+) else (
+    set "RELEASE_DIR=%PROJECT_DIR%\build\Release"
+)
+
 set "INSTALLER_DIR=%PROJECT_DIR%\installer"
 set "PACKAGE_DATA=%INSTALLER_DIR%\packages\com.s3rpent.media\data"
 set "OUTPUT_DIR=%PROJECT_DIR%\dist"
@@ -18,6 +26,8 @@ set "BINARYCREATOR=%IFW_DIR%\bin\binarycreator.exe"
 echo ========================================
 echo   S3rpent Media - Installer Builder
 echo ========================================
+echo.
+echo Build location: %RELEASE_DIR%
 echo.
 
 REM Check if Qt Installer Framework is installed

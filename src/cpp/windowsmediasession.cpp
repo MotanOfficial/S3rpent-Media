@@ -1,5 +1,4 @@
 #include "windowsmediasession.h"
-#include <QDebug>
 #include <QFileInfo>
 #include <QImageReader>
 #include <QStandardPaths>
@@ -48,7 +47,6 @@ void WindowsMediaSession::initializeSession()
 #ifdef _MSC_VER
     // MSVC/WinRT path: NO QMediaPlayer session owner
     // We use WinRT MediaPlayer directly, so don't create competing QMediaPlayer
-    qDebug() << "[WindowsMediaSession] MSVC WinRT mode - no QMediaPlayer session owner";
     return;
 #endif
 #endif
@@ -95,23 +93,21 @@ void WindowsMediaSession::initializeSession()
         }
     });
     
-    qDebug() << "[WindowsMediaSession] Initialized media session (QMediaPlayer fallback)";
 }
 
 void WindowsMediaSession::setSource(const QUrl &source)
 {
-    // HARD GUARD: If Windows Media Session is disabled, return immediately (no logging, no work)
-    if (!m_windowsSessionInitialized) {
-        return;
-    }
-    
     // Early return if source unchanged (avoid all work)
     if (m_source == source) {
         return;
     }
     
-    qDebug() << "[WindowsMediaSession] setSource() changed:" << m_source << "->" << source;
     m_source = source;
+
+    // HARD GUARD: If Windows Media Session is not initialized yet, keep the source and apply later.
+    if (!m_windowsSessionInitialized) {
+        return;
+    }
     
     // Set source on QMediaPlayer - this automatically exposes file metadata to Windows
     // QMediaPlayer reads metadata from the file and Windows Media Session picks it up
@@ -122,7 +118,6 @@ void WindowsMediaSession::setSource(const QUrl &source)
         // Sync playback state after source is set (so Windows sees the current state)
         // Use a longer delay to ensure source is fully loaded and metadata is available
         QTimer::singleShot(500, this, &WindowsMediaSession::updateSessionPlaybackState);
-        qDebug() << "[WindowsMediaSession] Source set on QMediaPlayer:" << source;
     }
 }
 
@@ -169,7 +164,6 @@ void WindowsMediaSession::setPlaybackStatus(int status)
         return;
     }
     
-    qDebug() << "[WindowsMediaSession] setPlaybackStatus() changed:" << m_playbackStatus << "->" << status;
     m_playbackStatus = status;
     emit playbackStatusChanged();
     
@@ -210,7 +204,6 @@ void WindowsMediaSession::updateMetadata(const QString &title, const QString &ar
         return;
     }
     
-    qDebug() << "[WindowsMediaSession] updateMetadata() changed";
     m_title = title;
     m_artist = artist;
     m_album = album;
@@ -278,15 +271,6 @@ void WindowsMediaSession::updateTimeline(qint64 position, qint64 duration)
 void WindowsMediaSession::updateSessionMetadata()
 {
     
-    if (m_sessionPlayer) {
-        // In Qt 6, QMediaPlayer automatically exposes metadata to Windows Media Session
-        // when a source is set. The metadata comes from the media file itself.
-        // We can't directly set metadata on QMediaPlayer, but Windows will read it
-        // from the file when the source is set.
-        
-        qDebug() << "[WindowsMediaSession] Metadata will be read from source file. Custom:" << m_title << "-" << m_artist;
-    }
-    
 #ifdef Q_OS_WIN
     // Update Windows Media Session with custom metadata
     updateWindowsMediaSessionMetadata();
@@ -331,8 +315,6 @@ void WindowsMediaSession::updateSessionPlaybackState()
 void WindowsMediaSession::updateSessionTimeline()
 {
     // Timeline updates disabled - Windows handles this automatically via MediaPlayer
-    // No manual updates needed, reducing overhead and preventing lag
-    qDebug() << "[WindowsMediaSession] updateSessionTimeline() called: position=" << m_position << "ms, duration=" << m_duration << "ms, sessionPlayer=" << (m_sessionPlayer ? "exists" : "NULL") << "- DISABLED (early return)";
     return;
 }
 
@@ -364,31 +346,26 @@ QImage WindowsMediaSession::loadThumbnailImage(const QUrl &url)
 
 void WindowsMediaSession::onPlayRequested()
 {
-    qDebug() << "[WindowsMediaSession] Play requested from Windows";
     emit playRequested();
 }
 
 void WindowsMediaSession::onPauseRequested()
 {
-    qDebug() << "[WindowsMediaSession] Pause requested from Windows";
     emit pauseRequested();
 }
 
 void WindowsMediaSession::onStopRequested()
 {
-    qDebug() << "[WindowsMediaSession] Stop requested from Windows";
     emit stopRequested();
 }
 
 void WindowsMediaSession::onNextRequested()
 {
-    qDebug() << "[WindowsMediaSession] Next requested from Windows";
     emit nextRequested();
 }
 
 void WindowsMediaSession::onPreviousRequested()
 {
-    qDebug() << "[WindowsMediaSession] Previous requested from Windows";
     emit previousRequested();
 }
 

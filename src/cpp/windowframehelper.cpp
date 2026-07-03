@@ -28,7 +28,6 @@ void WindowFrameHelper::setTitleBarVisible(bool visible)
 {
     bool oldValue = m_titleBarVisible.load(std::memory_order_seq_cst);
     if (oldValue != visible) {
-        qDebug() << "[WindowFrameHelper] titleBarVisible changed from" << oldValue << "to" << visible;
         // CRITICAL: Use atomic store with sequential consistency to ensure the write is immediately visible to all threads
         // The hit-test runs on Windows message thread, property updates on Qt event loop
         // Sequential consistency provides the strongest guarantees - all threads see operations in the same order
@@ -53,7 +52,6 @@ void WindowFrameHelper::setHotZoneActive(bool active)
 {
     bool oldValue = m_hotZoneActive.load(std::memory_order_seq_cst);
     if (oldValue != active) {
-        qDebug() << "[WindowFrameHelper] hotZoneActive changed from" << oldValue << "to" << active;
         // CRITICAL: Use atomic store with sequential consistency to ensure the write is immediately visible to all threads
         // The hit-test runs on Windows message thread, property updates on Qt event loop
         m_hotZoneActive.store(active, std::memory_order_seq_cst);
@@ -72,7 +70,6 @@ void WindowFrameHelper::setButtonAreaWidth(int width)
 {
     int oldValue = m_buttonAreaWidth.load(std::memory_order_seq_cst);
     if (oldValue != width) {
-        qDebug() << "[WindowFrameHelper] buttonAreaWidth changed from" << oldValue << "to" << width;
         m_buttonAreaWidth.store(width, std::memory_order_seq_cst);
         emit buttonAreaWidthChanged();
     }
@@ -87,7 +84,6 @@ void WindowFrameHelper::setFullscreen(bool fullscreen)
 {
     bool oldValue = m_fullscreen.load(std::memory_order_seq_cst);
     if (oldValue != fullscreen) {
-        qDebug() << "[WindowFrameHelper] fullscreen changed from" << oldValue << "to" << fullscreen;
         m_fullscreen.store(fullscreen, std::memory_order_seq_cst);
         
         // Update DWM frame extension based on fullscreen/maximized state
@@ -138,7 +134,6 @@ void WindowFrameHelper::setupFramelessWindow(QQuickWindow *window)
         }, Qt::SingleShotConnection);
     }
     
-    qDebug() << "[WindowFrameHelper] Frameless window setup complete";
 #else
     qWarning() << "[WindowFrameHelper] Frameless window setup only supported on Windows";
 #endif
@@ -163,7 +158,6 @@ void WindowFrameHelper::startSystemMove()
     // QML to own hover while Windows handles drag on demand.
     SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
     
-    qDebug() << "[WindowFrameHelper] Started system window drag";
 #else
     qWarning() << "[WindowFrameHelper] startSystemMove only supported on Windows";
 #endif
@@ -185,11 +179,9 @@ void WindowFrameHelper::toggleMaximize()
     if (isMaximized) {
         // Restore the window using native Windows API
         SendMessage(hwnd, WM_SYSCOMMAND, SC_RESTORE, 0);
-        qDebug() << "[WindowFrameHelper] Restored window using native Windows API";
     } else {
         // Maximize the window using native Windows API
         SendMessage(hwnd, WM_SYSCOMMAND, SC_MAXIMIZE, 0);
-        qDebug() << "[WindowFrameHelper] Maximized window using native Windows API";
     }
 #else
     qWarning() << "[WindowFrameHelper] toggleMaximize only supported on Windows";
@@ -205,7 +197,14 @@ bool WindowFrameHelper::nativeEventFilter(const QByteArray &eventType, void *mes
     
     MSG *msg = static_cast<MSG *>(message);
     
-    // Only handle events for our window
+    if (msg->message == WM_DWMCOLORIZATIONCOLORCHANGED) {
+        QMetaObject::invokeMethod(this, [this]() {
+            emit accentColorizationChanged();
+        }, Qt::QueuedConnection);
+        return false;
+    }
+
+    // Only handle per-window events for our window
     if (m_window && msg->hwnd != reinterpret_cast<HWND>(m_window->winId())) {
         return false;
     }
@@ -220,7 +219,7 @@ bool WindowFrameHelper::nativeEventFilter(const QByteArray &eventType, void *mes
         // Return false to let Windows/Qt handle it
         return false;
     }
-    
+
     return false;
 #else
     Q_UNUSED(eventType)
@@ -241,8 +240,6 @@ void WindowFrameHelper::extendFrameIntoClientArea(void *hwnd)
     HRESULT hr = DwmExtendFrameIntoClientArea(hwndWin, &margins);
     
     if (SUCCEEDED(hr)) {
-        qDebug() << "[WindowFrameHelper] DWM frame extended successfully - snapping and animations enabled";
-        
         // CRITICAL: Restore WS_EX_LAYERED style for transparent window (needed for DWM frame extension)
         // When DWM frame extension is active, the window needs to be transparent/layered
         LONG exStyle = GetWindowLong(hwndWin, GWL_EXSTYLE);
@@ -254,7 +251,6 @@ void WindowFrameHelper::extendFrameIntoClientArea(void *hwnd)
             // Force window update after style change
             SetWindowPos(hwndWin, nullptr, 0, 0, 0, 0,
                         SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-            qDebug() << "[WindowFrameHelper] Restored WS_EX_LAYERED for DWM frame extension";
         }
     } else {
         qWarning() << "[WindowFrameHelper] Failed to extend DWM frame:" << hr;
@@ -271,8 +267,6 @@ void WindowFrameHelper::removeFrameExtension(void *hwnd)
     HRESULT hr = DwmExtendFrameIntoClientArea(hwndWin, &margins);
     
     if (SUCCEEDED(hr)) {
-        qDebug() << "[WindowFrameHelper] DWM frame extension removed - fullscreen/maximized mode";
-        
         // CRITICAL: Make window opaque when DWM frame extension is removed
         // When DWM frame extension is removed, the window can become transparent
         // We need to ensure the window is fully opaque (alpha = 255)
@@ -280,11 +274,6 @@ void WindowFrameHelper::removeFrameExtension(void *hwnd)
         if (exStyle & WS_EX_LAYERED) {
             // Window is layered - set it to fully opaque
             SetLayeredWindowAttributes(hwndWin, 0, 255, LWA_ALPHA);
-            qDebug() << "[WindowFrameHelper] Set layered window to fully opaque (alpha=255)";
-        } else {
-            // Window is not layered - ensure it stays opaque
-            // The window color in QML should handle this, but we ensure it here
-            qDebug() << "[WindowFrameHelper] Window is not layered - should be opaque";
         }
     } else {
         qWarning() << "[WindowFrameHelper] Failed to remove DWM frame extension:" << hr;
@@ -311,7 +300,6 @@ void WindowFrameHelper::enableResize(void *hwnd)
         SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
     );
     
-    qDebug() << "[WindowFrameHelper] Resize styles restored (WS_THICKFRAME)";
 }
 
 qintptr WindowFrameHelper::handleNCHitTest(void *msg, const QPoint &globalPos)

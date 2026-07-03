@@ -9,11 +9,8 @@
 #include <QIODevice>
 #include <QTimer>
 #include <QAudioFormat>
-#include <QFileInfo>
 #include <QElapsedTimer>
-#include <QThread>
 #include <QMutex>
-#include <QWaitCondition>
 #include <QMediaPlayer>
 #include <QMediaMetaData>
 #include "customaudioprocessor.h"
@@ -90,19 +87,29 @@ private slots:
     void onFinished();
     void onError();
     void updatePosition();
-    void processAndQueueBuffer(const QAudioBuffer &rawBuffer);
+    void onMetadataDurationChanged(qint64 durationMs);
+    void onMetadataMediaStatusChanged(QMediaPlayer::MediaStatus status);
 
 private:
     void setupAudioPipeline();
     void cleanupAudioPipeline();
     void updatePlaybackState(PlaybackState state);
-    void startProcessingThread();
-    void stopProcessingThread();
-    Q_INVOKABLE void processBuffersInThread();  // Must be invokable to use with QMetaObject::invokeMethod
     void writeChunkToDevice();  // Non-blocking chunk writer
     void onMetaDataChanged();  // Handle metadata extraction from QMediaPlayer
+    bool applyDurationMs(qint64 ms);  // Set duration from metadata player / tags when ms > 0
+    void ensureMetadataPlayer();
+    void scheduleMetadataLoad(const QString &localFilePath);
+    void scheduleMetadataLoadUrl(const QUrl &url);
+    void rebindDecoderSource();
 
-private:
+#ifdef HAS_FFMPEG_LIBS
+    bool initFfmpegLocalDecoder(const QString &path);
+    void shutdownFfmpegLocalDecoder();
+    void pumpFfmpegAudio();
+    void seekFfmpegLocal(qint64 positionMs);
+    void enqueuePcmBuffer(const QByteArray &pcm, int sampleRate, int channels);
+#endif
+
     QUrl m_source;
     qint64 m_position;
     qint64 m_duration;
@@ -127,30 +134,33 @@ private:
     QElapsedTimer m_playbackStartTime;  // Track when audio actually starts playing
     qint64 m_basePosition;  // Base position when playback starts (for elapsed time calculation)
     
-    // Metadata extraction using QMediaPlayer
-    QMediaPlayer *m_metadataPlayer;  // Used only for metadata extraction, not playback
+    // Metadata extraction using QMediaPlayer (reused across tracks; loaded after decode pipeline starts)
+    QMediaPlayer *m_metadataPlayer;
     QVariantMap m_metaData;
     
     // Audio visualizer for feeding samples directly (avoids WASAPI loopback)
     QObject *m_audioVisualizer;
     
-    // Threading for audio processing
-    QThread *m_processingThread;
-    QMutex m_bufferMutex;
-    QWaitCondition m_bufferReady;
-    QList<QAudioBuffer> m_pendingBuffers;  // Raw buffers waiting to be processed
-    bool m_processingActive;
-    
-    // Threading for audio writing (separate from processing)
     QMutex m_writeMutex;
-    QList<QAudioBuffer> m_pendingWrites;  // Raw buffers waiting to be written (processed on-demand for real-time EQ)
+    QList<QAudioBuffer> m_pendingWrites;  // Raw buffers; EQ applied in writeChunkToDevice
     QByteArray m_partialProcessedData;  // Partial processed buffer if we couldn't write it all
     QTimer *m_writeTimer;  // Timer to periodically write chunks without blocking
     
     // Cleanup synchronization
     bool m_cleaningUp;  // Flag to prevent callbacks during cleanup
     QMutex m_cleanupMutex;  // Mutex to protect cleanup operations
+
+#ifdef HAS_FFMPEG_LIBS
+    bool m_ffmpegActive = false;
+    bool m_ffmpegEof = false;
+    struct AVFormatContext *m_avFmt = nullptr;
+    struct AVCodecContext *m_avCodec = nullptr;
+    struct SwrContext *m_swr = nullptr;
+    struct AVPacket *m_avPacket = nullptr;
+    struct AVFrame *m_avFrame = nullptr;
+    int m_avAudioStream = -1;
+    QTimer *m_ffmpegPumpTimer = nullptr;
+#endif
 };
 
 #endif // CUSTOMAUDIOPLAYER_H
-

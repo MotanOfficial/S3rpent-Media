@@ -53,6 +53,8 @@ signals:
     void hotZoneActiveChanged();
     void buttonAreaWidthChanged();
     void fullscreenChanged();
+    /** Emitted when Windows personalization accent color changes (WM_DWMCOLORIZATIONCOLORCHANGED). */
+    void accentColorizationChanged();
 
 private:
     int m_titleBarHeight = 50;  // Default title bar height

@@ -10,8 +10,33 @@ function loadImageViewer(params) {
         logToDebugConsole("[Load] ERROR: mediaViewerLoaders.viewerLoader is not accessible", "error")
         return
     }
-    MediaLoaderUtils.forceReloadLoader(mediaViewerLoaders.viewerLoader)
-    logToDebugConsole("[Load] viewerLoader.active = " + mediaViewerLoaders.viewerLoader.active, "info")
+
+    const loader = mediaViewerLoaders.viewerLoader
+    const win = mediaViewerLoaders.appWindow
+    const wantImage = win && (!win.isVideo && !win.isAudio && !win.isMarkdown && !win.isText && !win.isPdf && !win.isZip && !win.isModel) && win.currentImage !== ""
+
+    // Fast path: image/gif → another image/gif — keep the same subtree and only swap source.
+    if (wantImage && loader.active && loader.item) {
+        if (win._loadingImageViewer) return
+        win._loadingImageViewer = true
+        Qt.callLater(function() {
+            if (!win || !wantImage || !loader.item) {
+                if (win) win._loadingImageViewer = false
+                return
+            }
+            if (loader.item.source.toString() !== win.currentImage.toString()) {
+                loader.item.source = win.currentImage
+            }
+            if (loader.item.isGif !== undefined) {
+                loader.item.isGif = win.isGif
+            }
+            win._loadingImageViewer = false
+        })
+        return
+    }
+
+    MediaLoaderUtils.forceReloadLoader(loader)
+    logToDebugConsole("[Load] viewerLoader.active = " + loader.active, "info")
 }
 
 function unloadImageViewer(params) {
@@ -27,13 +52,32 @@ function loadVideoPlayer(params) {
         logToDebugConsole("[Load] ERROR: mediaViewerLoaders.videoPlayerLoader is not accessible", "error")
         return
     }
-    logToDebugConsole("[Load] Before forceReloadLoader: active = " + mediaViewerLoaders.videoPlayerLoader.active, "info")
-    MediaLoaderUtils.forceReloadLoader(mediaViewerLoaders.videoPlayerLoader)
-    logToDebugConsole("[Load] After forceReloadLoader: active = " + mediaViewerLoaders.videoPlayerLoader.active, "info")
-    logToDebugConsole("[Load] videoPlayerLoader.item: " + (mediaViewerLoaders.videoPlayerLoader.item ? "exists" : "null"), "info")
-    if (mediaViewerLoaders.videoPlayerLoader.item) {
-        logToDebugConsole("[Load] videoPlayerLoader.item.source: " + mediaViewerLoaders.videoPlayerLoader.item.source, "info")
+
+    const loader = mediaViewerLoaders.videoPlayerLoader
+    const win = mediaViewerLoaders.appWindow
+    const wantVideo = win && win.isVideo && win.currentImage !== ""
+
+    // Fast path: video → another video — keep the player and only swap source.
+    if (wantVideo && loader.active && loader.item) {
+        if (win._loadingVideoPlayer) return
+        win._loadingVideoPlayer = true
+        MediaLoaderUtils.stopAndClearPlayer(loader.item)
+        Qt.callLater(function() {
+            if (!win || !wantVideo || !loader.item) {
+                if (win) win._loadingVideoPlayer = false
+                return
+            }
+            if (loader.item.source.toString() !== win.currentImage.toString()) {
+                loader.item.source = win.currentImage
+            }
+            win._loadingVideoPlayer = false
+        })
+        return
     }
+
+    logToDebugConsole("[Load] Before forceReloadLoader: active = " + loader.active, "info")
+    MediaLoaderUtils.forceReloadLoader(loader)
+    logToDebugConsole("[Load] After forceReloadLoader: active = " + loader.active, "info")
 }
 
 function unloadVideoPlayer(params) {
@@ -47,6 +91,27 @@ function loadAudioPlayer(params) {
     
     // Prevent double-loading using a guard flag on the window object
     if (window._loadingAudioPlayer) {
+        return
+    }
+    
+    const loader = mediaViewerLoaders.audioPlayerLoader
+    const wantAudio = window.isAudio && window.currentImage !== ""
+    
+    // Fast path: audio → another audio — keep the same AudioPlayer/Loader item and only swap source.
+    // Avoids Loader teardown + two callLater ticks + full QML subtree recreation (major win when skipping tracks).
+    if (wantAudio && loader && loader.active && loader.item) {
+        window._loadingAudioPlayer = true
+        MediaLoaderUtils.stopAndClearPlayer(loader.item)
+        Qt.callLater(function() {
+            if (!window.isAudio || window.currentImage === "" || !loader.item) {
+                window._loadingAudioPlayer = false
+                return
+            }
+            if (loader.item.source.toString() !== window.currentImage.toString()) {
+                loader.item.source = window.currentImage
+            }
+            window._loadingAudioPlayer = false
+        })
         return
     }
     

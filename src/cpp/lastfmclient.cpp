@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <QUrlQuery>
 #include <QRegularExpression>
+#include <QSettings>
 
 LastFMClient::LastFMClient(QObject *parent)
     : QObject(parent)
@@ -29,8 +30,20 @@ void LastFMClient::fetchCoverArt(const QString &trackName, const QString &artist
         return;
     }
 
-    // Use provided API key or default public key
-    m_apiKey = apiKey.isEmpty() ? "b25b959554ed76058ac220b7b2e0a026" : apiKey;  // Default public key for testing
+    // Use provided API key, or read from settings, or use public demo key
+    if (!apiKey.isEmpty()) {
+        m_apiKey = apiKey;
+    } else {
+        // Read from QSettings
+        QSettings settings;
+        QString settingsKey = settings.value("lastFmApiKey").toString();
+        if (!settingsKey.isEmpty()) {
+            m_apiKey = settingsKey;
+        } else {
+            // Public demo key for testing - users should supply their own
+            m_apiKey = "b25b959554ed76058ac220b7b2e0a026";
+        }
+    }
 
     setLoading(true);
     setLastError("");

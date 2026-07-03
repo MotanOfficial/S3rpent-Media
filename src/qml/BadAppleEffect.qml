@@ -6,7 +6,7 @@ import QtMultimedia
 Item {
     id: badAppleEffect
     
-    property bool enabled: false  // Setting enabled (doesn't auto-play)
+    property bool effectEnabled: false  // Doesn't auto-play
     property real effectOpacity: 1.0
     property color silhouetteColor: "white"
     property real frameIndex: 0.0  // Current frame (0-6571 for full Bad Apple)
@@ -16,29 +16,35 @@ Item {
     property url frameTextureUrl: ""
     
     // Actual visibility - only show when playing
-    property bool shouldShow: enabled && playing
+    property bool shouldShow: effectEnabled && playing
     
     anchors.fill: parent
     visible: shouldShow
     
-    // Load Bad Apple frames on component creation
-    Component.onCompleted: {
-        if (typeof ColorUtils !== "undefined") {
-            // Try to load from binary file (should be in same directory as executable)
-            const appDir = ColorUtils.getAppDirectory()
-            // Convert Windows path separators and ensure proper URL format
-            const normalizedDir = appDir.replace(/\\/g, "/")
-            const binaryPath = "file:///" + normalizedDir + "/badapple_frames.bin"
-            
-            if (ColorUtils.loadBadAppleFrames(binaryPath)) {
-                frameTextureUrl = ColorUtils.createBadAppleTexture()
-                framesLoaded = (frameTextureUrl !== "")
-                if (framesLoaded) {
-                    console.log("[BadApple] Frames loaded successfully")
-                }
+    // Keep startup fast: defer frame/texture loading until playback is requested.
+    function ensureFramesLoaded() {
+        if (framesLoaded) {
+            return
+        }
+        if (typeof ColorUtils === "undefined") {
+            console.log("[BadApple] ColorUtils unavailable - using procedural generation")
+            return
+        }
+
+        const appDir = ColorUtils.getAppDirectory()
+        const normalizedDir = appDir.replace(/\\/g, "/")
+        const binaryPath = "file:///" + normalizedDir + "/badapple_frames.bin"
+
+        if (ColorUtils.loadBadAppleFrames(binaryPath)) {
+            frameTextureUrl = ColorUtils.createBadAppleTexture()
+            framesLoaded = (frameTextureUrl !== "")
+            if (framesLoaded) {
+                console.log("[BadApple] Frames loaded successfully")
             } else {
-                console.log("[BadApple] Frame loading failed - using procedural generation")
+                console.log("[BadApple] Texture creation failed - using procedural generation")
             }
+        } else {
+            console.log("[BadApple] Frame loading failed - using procedural generation")
         }
     }
     
@@ -103,7 +109,6 @@ Item {
                 const normalizedDir = appDir.replace(/\\/g, "/")
                 const audioPath = "file:///" + normalizedDir + "/Bad Apple!!.mp3"
                 badAppleAudioPlayer.source = audioPath
-                console.log("[BadApple] Audio source set to:", audioPath)
             }
         }
         
@@ -189,8 +194,9 @@ Item {
     
     // Function to start Bad Apple playback
     function startPlayback() {
+        ensureFramesLoaded()
         // Enable the effect first
-        enabled = true
+        effectEnabled = true
         // Reset animation state
         frameIndex = 0.0
         time = 0.0
@@ -199,10 +205,9 @@ Item {
         badAppleAudioPlayer.position = 0
         Qt.callLater(function() {
             badAppleAudioPlayer.play()
-            // Force playing state to true when we start
-            playing = true
+            badAppleEffect.playing = true
         })
-        console.log("[BadApple] Starting playback - enabled:", enabled)
+        console.log("[BadApple] Starting playback - effectEnabled:", effectEnabled)
     }
     
     // Function to stop Bad Apple playback
@@ -212,6 +217,7 @@ Item {
         frameIndex = 0.0
         time = 0.0
         playing = false
+        effectEnabled = false
         console.log("[BadApple] Stopped playback")
     }
     

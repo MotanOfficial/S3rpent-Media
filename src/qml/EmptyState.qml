@@ -14,7 +14,9 @@ Column {
     spacing: 32
     
     property bool showingSettings: false
+    property bool listenTogetherEnabled: false
     signal openFileRequested()
+    signal openListenTogetherRequested()
     
     // Access to appWindow for colors
     property var appWindow: null
@@ -322,6 +324,61 @@ Column {
         }
     }
     
+    // Listen Together entry (visible without loading media first)
+    Rectangle {
+        id: listenTogetherButton
+        visible: listenTogetherEnabled
+        width: 220
+        height: 44
+        radius: 22
+        anchors.horizontalCenter: parent.horizontalCenter
+        property bool isHovered: false
+        property bool isPressed: false
+        color: isPressed
+               ? Qt.rgba(0.45, 0.35, 0.95, 0.35)
+               : (isHovered ? Qt.rgba(0.45, 0.35, 0.95, 0.25) : Qt.rgba(0.45, 0.35, 0.95, 0.15))
+        border.width: 1
+        border.color: Qt.rgba(0.65, 0.55, 1.0, isHovered ? 0.55 : 0.35)
+
+        Row {
+            anchors.centerIn: parent
+            spacing: 8
+            Item {
+                width: 18
+                height: 18
+                anchors.verticalCenter: parent.verticalCenter
+                Image {
+                    id: ltIcon
+                    anchors.fill: parent
+                    source: "qrc:/qlementine/icons/16/hardware/headphones.svg"
+                    sourceSize: Qt.size(18, 18)
+                    visible: false
+                }
+                ColorOverlay {
+                    anchors.fill: parent
+                    source: ltIcon
+                    color: "#e9e0ff"
+                }
+            }
+            Text {
+                text: qsTr("Listen Together")
+                font.pixelSize: 14
+                font.weight: Font.Medium
+                color: Qt.rgba(1, 1, 1, 0.92)
+                anchors.verticalCenter: parent.verticalCenter
+            }
+        }
+
+        TapHandler {
+            onTapped: root.openListenTogetherRequested()
+            onPressedChanged: listenTogetherButton.isPressed = pressed
+        }
+        HoverHandler {
+            cursorShape: Qt.PointingHandCursor
+            onHoveredChanged: listenTogetherButton.isHovered = hovered
+        }
+    }
+
     // Supported formats hint
     Text {
         text: qsTr("Images • Videos • Audio • Documents")

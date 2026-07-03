@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Window
+import "../js/FileTypeUtils.js" as FileTypeUtils
 
 Item {
     id: imageViewer
@@ -12,7 +13,7 @@ Item {
     property real zoomFactor: 1.0
     property real panX: 0
     property real panY: 0
-    property int rotation: 0  // Rotation in degrees (0, 90, 180, 270)
+    rotation: 0  // Rotation in degrees (0, 90, 180, 270)
     property color accentColor: "#121216"
     property bool imageInterpolationMode: true  // true = smooth/antialiased, false = nearest neighbor
     property bool dynamicResolutionEnabled: true  // Dynamic resolution adjustment based on zoom level
@@ -30,10 +31,64 @@ Item {
     property int originalSourceWidth: 0  // Store original full-resolution source width for 1:1 zoom calculation
     property int originalSourceHeight: 0  // Store original full-resolution source height
     
+    // Longest edge cap for dynamic decode (avoids multi‑GB pixmaps on huge images)
+    readonly property int maxDecodeEdge: 8192
+    
+    function isGifUrl(u) {
+        if (!u || u === "")
+            return false
+        const s = u.toString().toLowerCase()
+        return s.endsWith(".gif") || s.indexOf(".gif?") >= 0
+    }
+    
+    function computeDynamicDecodeSize() {
+        if (mediaContainer.width <= 0 || mediaContainer.height <= 0)
+            return Qt.size(0, 0)
+        const padding = 1.2
+        let dpr = 1.0
+        if (windowRef && windowRef.screen)
+            dpr = windowRef.screen.devicePixelRatio
+        let tw = Math.ceil(mediaContainer.width * zoomFactor * padding * dpr)
+        let th = Math.ceil(mediaContainer.height * zoomFactor * padding * dpr)
+        const maxEdge = maxDecodeEdge
+        const longest = Math.max(tw, th)
+        if (longest > maxEdge) {
+            const scale = maxEdge / longest
+            tw = Math.ceil(tw * scale)
+            th = Math.ceil(th * scale)
+        }
+        return Qt.size(tw, th)
+    }
+    
+    property url prefetchNextSource: {
+        const w = windowRef
+        if (!w || !w.directoryImages || w.directoryImages.length <= 1)
+            return ""
+        const idx = w.currentImageIndex
+        const len = w.directoryImages.length
+        const nextIdx = (idx + 1) % len
+        const url = w.directoryImages[nextIdx]
+        if (url === w.currentImage)
+            return ""
+        return url
+    }
+    property url prefetchPrevSource: {
+        const w = windowRef
+        if (!w || !w.directoryImages || w.directoryImages.length <= 1)
+            return ""
+        const idx = w.currentImageIndex
+        const len = w.directoryImages.length
+        const prevIdx = (idx - 1 + len) % len
+        const url = w.directoryImages[prevIdx]
+        if (url === w.currentImage)
+            return ""
+        return url
+    }
+    
     // Timer to debounce sourceSize updates
     Timer {
         id: sourceSizeUpdateTimer
-        interval: 300  // Wait 300ms before updating to batch rapid changes
+        interval: 150  // Short debounce: faster response while still batching resize bursts
         onTriggered: updateSourceSize()
     }
     
@@ -44,7 +99,6 @@ Item {
         // Load into the non-active image to keep the currently visible one on screen
         const target = photoBufferActive ? photo : photoBuffer
         const finalSize = (targetSize !== undefined && targetSize.width > 0 && targetSize.height > 0) ? targetSize : undefined
-        console.log("[DynamicRes] startBufferedReload: targetSize =", targetSize !== undefined ? (targetSize.width + "x" + targetSize.height) : "undefined", "| finalSize =", finalSize !== undefined ? (finalSize.width + "x" + finalSize.height) : "undefined (full res)", "| buffer active:", photoBufferActive)
         target.loadingForSwap = true
         target.visible = true
         // If targetSize is undefined or has zero dimensions, use undefined for full resolution
@@ -69,11 +123,8 @@ Item {
             }
             
             // Calculate the effective display size (container size * zoomFactor)
-            // Add 20% padding for quality to ensure smooth rendering
-            const padding = 1.2
-            const targetWidth = Math.ceil(mediaContainer.width * zoomFactor * padding)
-            const targetHeight = Math.ceil(mediaContainer.height * zoomFactor * padding)
-            sizeToUse = Qt.size(targetWidth, targetHeight)
+            const ds = computeDynamicDecodeSize()
+            sizeToUse = Qt.size(ds.width, ds.height)
         }
         
         // When disabled, sizeToUse is undefined (full resolution)
@@ -89,13 +140,10 @@ Item {
         // If the setting changed (enabled <-> disabled), always update
         // This handles the case when setting is toggled on an already-loaded image
         if (settingChanged) {
-            console.log("[DynamicRes] updateSourceSize: Setting changed detected, forcing reload")
             // Force update - don't check size changes
             computedSourceSize = (sizeToUse !== undefined) ? sizeToUse : Qt.size(0, 0)
             lastZoomFactor = zoomFactor
             lastContainerSize = Qt.size(mediaContainer.width, mediaContainer.height)
-            
-            console.log("[DynamicRes] updateSourceSize: New size:", sizeToUse !== undefined ? (sizeToUse.width + "x" + sizeToUse.height) : "undefined (full res)")
             // Reload image in background buffer for smooth swap
             startBufferedReload(sizeToUse)
             return
@@ -146,11 +194,8 @@ Item {
     
     // Update sourceSize when container size changes (but debounced)
     onDynamicResolutionEnabledChanged: {
-        console.log("[DynamicRes] Setting changed to:", dynamicResolutionEnabled ? "ENABLED" : "DISABLED", "| Source:", source, "| Last state:", lastDynamicResolutionEnabled, "| Initial load:", _isInitialSourceLoad)
-        
         // Skip if we're in the middle of an initial source load - onSourceChanged will handle it
         if (_isInitialSourceLoad) {
-            console.log("[DynamicRes] Skipping - initial source load in progress")
             lastDynamicResolutionEnabled = dynamicResolutionEnabled
             return
         }
@@ -163,51 +208,36 @@ Item {
             
             // Check if image is already loaded (not during initial load)
             const imageAlreadyLoaded = photo.status === Image.Ready || photoBuffer.status === Image.Ready
-            
-            console.log("[DynamicRes] Setting actually changed:", settingActuallyChanged, "| Image loaded:", imageAlreadyLoaded, "| Container size:", mediaContainer.width, "x", mediaContainer.height, "| Zoom:", zoomFactor)
-            
+
             if (settingActuallyChanged && imageAlreadyLoaded) {
                 // Only reload if image is already loaded (not during initial load)
                 // Calculate the new size based on current setting
                 let newSize = undefined
                 if (dynamicResolutionEnabled) {
-                    // Enabled: calculate size if container is ready
                     if (mediaContainer.width > 0 && mediaContainer.height > 0) {
-                        const padding = 1.2
-                        const targetWidth = Math.ceil(mediaContainer.width * zoomFactor * padding)
-                        const targetHeight = Math.ceil(mediaContainer.height * zoomFactor * padding)
-                        newSize = Qt.size(targetWidth, targetHeight)
-                        console.log("[DynamicRes] ENABLED - Calculated size:", targetWidth, "x", targetHeight)
-                    } else {
-                        console.log("[DynamicRes] ENABLED - Container size not ready yet")
+                        const ds = computeDynamicDecodeSize()
+                        newSize = Qt.size(ds.width, ds.height)
                     }
-                } else {
-                    console.log("[DynamicRes] DISABLED - Will use full resolution (undefined)")
                 }
                 // If disabled, newSize remains undefined (full resolution)
                 
                 // Update computedSourceSize - the binding will update sourceSize automatically
                 computedSourceSize = (newSize !== undefined) ? newSize : Qt.size(0, 0)
-                console.log("[DynamicRes] Updated computedSourceSize:", computedSourceSize.width, "x", computedSourceSize.height, "| Will resolve to:", newSize !== undefined ? (newSize.width + "x" + newSize.height) : "undefined (full res)")
-                
+
                 // Store current state
                 const currentSource = source
                 
                 // Clear both sources to force reload with new sourceSize
                 photo.source = ""
                 photoBuffer.source = ""
-                console.log("[DynamicRes] Cleared sources, will reload with new sourceSize...")
-                
+
                 // Wait for next frame, then reload
                 // This ensures Qt recognizes it as a new load with new sourceSize
                 Qt.callLater(function() {
                     Qt.callLater(function() {
                         if (source === currentSource && source !== "") {
-                            console.log("[DynamicRes] Reloading image with new sourceSize:", newSize !== undefined ? (newSize.width + "x" + newSize.height) : "undefined (full res)")
                             // Reload using buffered reload system
                             startBufferedReload(newSize)
-                        } else {
-                            console.log("[DynamicRes] Source changed during reload, aborting")
                         }
                     })
                 })
@@ -217,27 +247,21 @@ Item {
             } else if (settingActuallyChanged && !imageAlreadyLoaded) {
                 // Setting changed during initial load - don't set sourceSize here
                 // Let onSourceChanged handle it to avoid double loading
-                console.log("[DynamicRes] Setting changed during initial load, will be handled by onSourceChanged")
                 // Just update computedSourceSize for tracking, but don't touch photo.sourceSize
                 let newSize = undefined
                 if (dynamicResolutionEnabled) {
                     if (mediaContainer.width > 0 && mediaContainer.height > 0) {
-                        const padding = 1.2
-                        const targetWidth = Math.ceil(mediaContainer.width * zoomFactor * padding)
-                        const targetHeight = Math.ceil(mediaContainer.height * zoomFactor * padding)
-                        newSize = Qt.size(targetWidth, targetHeight)
+                        const ds = computeDynamicDecodeSize()
+                        newSize = Qt.size(ds.width, ds.height)
                     }
                 }
                 computedSourceSize = (newSize !== undefined) ? newSize : Qt.size(0, 0)
                 // Don't set photo.sourceSize here - onSourceChanged will handle it
-            } else {
-                console.log("[DynamicRes] Setting didn't actually change (initial load or same value)")
             }
-            
+
             // Update the tracked state
             lastDynamicResolutionEnabled = dynamicResolutionEnabled
         } else {
-            console.log("[DynamicRes] No source or is GIF, just updating tracked state")
             // Update tracked state even if no source
             lastDynamicResolutionEnabled = dynamicResolutionEnabled
         }
@@ -318,23 +342,18 @@ Item {
             if (dynamicResolutionEnabled) {
                 // If container size is available, calculate size immediately
                 if (mediaContainer.width > 0 && mediaContainer.height > 0) {
-                    const padding = 1.2
-                    const targetWidth = Math.ceil(mediaContainer.width * zoomFactor * padding)
-                    const targetHeight = Math.ceil(mediaContainer.height * zoomFactor * padding)
-                    initialSourceSize = Qt.size(targetWidth, targetHeight)
+                    const ds = computeDynamicDecodeSize()
+                    initialSourceSize = Qt.size(ds.width, ds.height)
                     computedSourceSize = initialSourceSize
-                    console.log("[DynamicRes] onSourceChanged: Set sourceSize to", targetWidth, "x", targetHeight, "(enabled)")
                 } else {
                     // Container size not ready, set to undefined temporarily
                     computedSourceSize = Qt.size(0, 0)
                     initialSourceSize = undefined
-                    console.log("[DynamicRes] onSourceChanged: Container not ready, sourceSize = undefined")
                 }
             } else {
                 // Disabled: always use full resolution (undefined)
                 computedSourceSize = Qt.size(0, 0)  // Marker for disabled
                 initialSourceSize = undefined
-                console.log("[DynamicRes] onSourceChanged: Dynamic resolution disabled, sourceSize = undefined (full res)")
             }
             
             // Set sourceSize directly on both images BEFORE restoring source
@@ -342,12 +361,10 @@ Item {
             if (initialSourceSize !== undefined) {
                 photo.sourceSize = initialSourceSize
                 photoBuffer.sourceSize = initialSourceSize
-                console.log("[DynamicRes] onSourceChanged: Set photo.sourceSize =", initialSourceSize.width, "x", initialSourceSize.height)
             } else {
                 // Explicitly set to undefined for full resolution
                 photo.sourceSize = undefined
                 photoBuffer.sourceSize = undefined
-                console.log("[DynamicRes] onSourceChanged: Set photo.sourceSize = undefined (full resolution)")
             }
             
             // Now restore the source - Image will load with correct sourceSize from the start
@@ -356,7 +373,6 @@ Item {
                 if (imageViewer.source === newSource && newSource !== "") {
                     photo.source = newSource
                     photoBuffer.source = newSource
-                    console.log("[DynamicRes] onSourceChanged: Restored photo.source, should load once with correct sourceSize")
                 }
             })
             
@@ -562,13 +578,12 @@ Item {
         ]
         
         // Double-buffered static image for smooth sourceSize changes
-        // Double-buffered static image for smooth sourceSize changes
         Image {
             id: photo
             anchors.fill: parent
             fillMode: Image.PreserveAspectFit
             asynchronous: true
-            cache: false  // Disable caching to allow proper memory release
+            cache: true  // Qt image cache: speeds repeat loads / prefetch; cleared when source is cleared
             smooth: imageViewer.imageInterpolationMode  // Use interpolation mode setting
             mipmap: false  // Disable mipmapping to reduce memory usage
             visible: !imageViewer.isGif && imageViewer.source !== "" && !imageViewer.photoBufferActive
@@ -577,7 +592,6 @@ Item {
             
             onStatusChanged: {
                 if (status === Image.Ready) {
-                    console.log("[DynamicRes] photo.status = Ready | sourceSize =", sourceSize !== undefined ? (sourceSize.width + "x" + sourceSize.height) : "undefined", "| visible =", visible, "| paintedWidth =", paintedWidth, "| paintedHeight =", paintedHeight)
                     // Store original source dimensions (implicitWidth/Height give us the actual image size)
                     if (imageViewer.originalSourceWidth === 0 || imageViewer.originalSourceHeight === 0) {
                         imageViewer.originalSourceWidth = implicitWidth > 0 ? implicitWidth : (sourceSize.width > 0 ? sourceSize.width : 0)
@@ -593,10 +607,6 @@ Item {
                         imageReady()
                         clampPan()
                     }
-                } else if (status === Image.Loading) {
-                    console.log("[DynamicRes] photo.status = Loading | sourceSize =", sourceSize !== undefined ? (sourceSize.width + "x" + sourceSize.height) : "undefined")
-                } else if (status === Image.Error) {
-                    console.log("[DynamicRes] photo.status = Error")
                 }
             }
             onPaintedWidthChanged: {
@@ -614,7 +624,7 @@ Item {
             anchors.fill: parent
             fillMode: Image.PreserveAspectFit
             asynchronous: true
-            cache: false  // Disable caching to allow proper memory release
+            cache: true  // Qt image cache: speeds repeat loads / prefetch; cleared when source is cleared
             smooth: imageViewer.imageInterpolationMode  // Use interpolation mode setting
             mipmap: false  // Disable mipmapping to reduce memory usage
             visible: !imageViewer.isGif && imageViewer.source !== "" && imageViewer.photoBufferActive
@@ -690,6 +700,73 @@ Item {
             onPaintedHeightChanged: {
                 clampPan()
                 paintedSizeChanged()
+            }
+        }
+    }
+    
+    // Prefetch next/prev still images into Qt's image cache (wrap matches Main.qml navigation)
+    Item {
+        width: 1
+        height: 1
+        visible: false
+        Image {
+            id: prefetchNextImage
+            anchors.fill: parent
+            asynchronous: true
+            cache: true
+            smooth: false
+            mipmap: false
+            fillMode: Image.PreserveAspectFit
+            property url effectiveSource: {
+                if (imageViewer.source === "" || imageViewer.isGif)
+                    return ""
+                const u = imageViewer.prefetchNextSource
+                if (!u || u === "" || u === imageViewer.source)
+                    return ""
+                if (imageViewer.isGifUrl(u))
+                    return ""
+                if (!FileTypeUtils.checkIfImage(u))
+                    return ""
+                return u
+            }
+            source: effectiveSource
+            sourceSize: {
+                if (!imageViewer.dynamicResolutionEnabled)
+                    return undefined
+                if (imageViewer.computedSourceSize.width > 0 && imageViewer.computedSourceSize.height > 0)
+                    return imageViewer.computedSourceSize
+                return undefined
+            }
+        }
+        Image {
+            id: prefetchPrevImage
+            anchors.fill: parent
+            asynchronous: true
+            cache: true
+            smooth: false
+            mipmap: false
+            fillMode: Image.PreserveAspectFit
+            property url effectiveSource: {
+                if (imageViewer.source === "" || imageViewer.isGif)
+                    return ""
+                const u = imageViewer.prefetchPrevSource
+                if (!u || u === "" || u === imageViewer.source)
+                    return ""
+                if (imageViewer.isGifUrl(u))
+                    return ""
+                if (!FileTypeUtils.checkIfImage(u))
+                    return ""
+                if (u === imageViewer.prefetchNextSource && u !== "")
+                    return ""
+                return u
+            }
+            source: effectiveSource
+            sourceSize: {
+                if (!imageViewer.dynamicResolutionEnabled)
+                    return undefined
+                if (imageViewer.computedSourceSize.width > 0 && imageViewer.computedSourceSize.height > 0)
+                    return imageViewer.computedSourceSize
+                return undefined
             }
         }
     }
