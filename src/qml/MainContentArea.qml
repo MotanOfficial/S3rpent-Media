@@ -255,6 +255,8 @@ Item {
             lastFMApiKey: appWindow.lastFMApiKey
             debugConsoleEnabled: appWindow.debugConsoleEnabled
             musicVideoMaxHeight: appWindow.musicVideoMaxHeight
+            audioVisualizer3DEnabled: appWindow.audioVisualizer3DEnabled
+            audioVisualizerPreset: appWindow.audioVisualizerPreset
 
             onBackClicked: appWindow.showingSettings = false
             onDynamicColoringToggled: function(enabled) {
@@ -309,6 +311,12 @@ Item {
             }
             onLyricsTranslationToggled: function(enabled) {
                 appWindow.lyricsTranslationEnabled = enabled
+            }
+            onAudioVisualizer3DToggled: function(enabled) {
+                appWindow.audioVisualizer3DEnabled = enabled
+            }
+            onAudioVisualizerPresetSelected: function(preset) {
+                appWindow.audioVisualizerPreset = preset
             }
             onLyricsTranslationApiKeyEdited: function(apiKey) {
                 appWindow.lyricsTranslationApiKey = apiKey

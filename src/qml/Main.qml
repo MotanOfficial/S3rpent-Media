@@ -118,6 +118,8 @@ ApplicationWindow {
         id: audioSettings
         category: "audio"
         property alias volume: window.audioVolume
+        property alias audioVisualizer3DEnabled: window.audioVisualizer3DEnabled
+        property alias audioVisualizerPreset: window.audioVisualizerPreset
     }
     
     Settings {
@@ -432,6 +434,9 @@ ApplicationWindow {
 
     onWindowsAccentColorEnabledChanged: updateAccentColor()
     property bool betaAudioProcessingEnabled: true
+    property bool audioVisualizer3DEnabled: false
+    property int audioVisualizerPreset: 0
+    property bool audioImmersive3D: false
     property bool gradientBackgroundEnabled: true
     property bool backdropBlurEnabled: false  // Blurred cover-art backdrop effect
     property bool ambientGradientEnabled: false  // Spotify-style ambient animated gradient

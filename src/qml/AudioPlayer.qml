@@ -23,6 +23,14 @@ Item {
     property int currentLyricIndex: -1
     property string lastFetchedSignature: ""  // Track last fetched song to avoid duplicates
     property bool showVisualizer: true
+    property bool audioVisualizer3DEnabled: false
+    property int audioVisualizerPreset: 0
+    readonly property bool immersiveAudio3D: audioVisualizer3DEnabled && source !== "" && !showingMetadata
+    readonly property string immersiveTrackTitle: streamOverrideTitleResolved()
+        || getMetaString(MediaMetaData.Title) || getMetaString("Title") || "Unknown Title"
+    readonly property string immersiveTrackArtist: streamOverrideArtistResolved()
+        || getMetaString(MediaMetaData.ContributingArtist) || getMetaString("ContributingArtist")
+        || getMetaString("Artist") || "Unknown Artist"
     property real currentPitch: 1.0  // Store pitch locally (MediaPlayer doesn't support it directly)
     property bool betaAudioProcessingEnabled: true
     property bool metadataReady: false
@@ -48,6 +56,24 @@ Item {
     property string webRTCArtist: ""
     property string webRTCAlbum: ""
     // -----------------------------------
+
+    function syncImmersiveAudio3DState() {
+        if (appWindowRef)
+            appWindowRef.audioImmersive3D = immersiveAudio3D
+    }
+
+    onImmersiveAudio3DChanged: {
+        syncImmersiveAudio3DState()
+        if (immersiveAudio3D && currentPlaybackState === MediaPlayer.PlayingState) {
+            showControls = false
+            Qt.callLater(function() {
+                if (immersiveAudio3D)
+                    controlsHideTimer.restart()
+            })
+        }
+    }
+
+    onAppWindowRefChanged: syncImmersiveAudio3DState()
 
     function _thumbKey(url) {
         if (!url || url === "") return ""
@@ -190,6 +216,7 @@ Item {
     // Also sync when DiscordRPC component is ready
     // Use Qt.callLater to ensure DiscordRPC is fully initialized
     Component.onCompleted: {
+        syncImmersiveAudio3DState()
         Qt.callLater(function() {
             if (discordRPC) {
                 discordRPC.enabled = discordRPCEnabled
@@ -246,6 +273,15 @@ Item {
     // Property to control which cover art source to use
     property string coverArtSource: "coverartarchive"  // "coverartarchive" or "lastfm"
     property string lastFMApiKey: ""  // Last.fm API key (optional)
+
+    // Best available cover for 3D particle field (embedded tags + online fetch).
+    readonly property url resolvedCoverArtUrl: {
+        if (coverArtSource === "lastfm" && lastFMClient.fetchedCoverArtUrl !== "")
+            return lastFMClient.fetchedCoverArtUrl
+        if (coverArtSource === "coverartarchive" && coverArtClient.fetchedCoverArtUrl !== "")
+            return coverArtClient.fetchedCoverArtUrl
+        return coverArt
+    }
     
     // Windows media session integration
     WindowsMediaSession {
@@ -1330,8 +1366,16 @@ Item {
         width: Math.min(500, parent.width - 48)
         height: 56
         visible: audioPlayer.source !== ""
-        opacity: (controlsMouseArea.containsMouse || currentPlaybackState !== MediaPlayer.PlayingState || showControls) ? 1.0 : 0.0
-        Behavior on opacity { NumberAnimation { duration: 200 } }
+        z: 10
+        opacity: {
+            if (immersiveAudio3D) {
+                if (currentPlaybackState !== MediaPlayer.PlayingState)
+                    return 1.0
+                return (showControls || controlsMouseArea.containsMouse) ? 1.0 : 0.0
+            }
+            return (controlsMouseArea.containsMouse || currentPlaybackState !== MediaPlayer.PlayingState || showControls) ? 1.0 : 0.0
+        }
+        Behavior on opacity { NumberAnimation { duration: 280 } }
         
         MouseArea {
             id: controlsMouseArea
@@ -2234,54 +2278,140 @@ Item {
         }
     }
     
-    // Audio visualizer background
-    AudioVisualizerView {
-        id: audioVisualizer
+    // Immersive black backdrop — Mineradio space field (not album accent wash)
+    Rectangle {
         anchors.fill: parent
-        z: -1  // Behind everything
-        visualizerColor: foregroundColor
-        active: {
-            if (!showVisualizer || source === "") return false
+        z: -1
+        color: "#000000"
+        visible: audioVisualizer3DEnabled && source !== ""
+    }
+
+    // Audio visualizer background (2D bars or Mineradio 3D scene)
+    Loader {
+        id: audioVisualizerLoader
+        anchors.fill: parent
+        z: audioVisualizer3DEnabled ? 2 : -1
+
+        readonly property bool visualizerActive: {
+            if (!showVisualizer || source === "")
+                return false
+            if (audioVisualizer3DEnabled)
+                return true
             return currentPlaybackState === MediaPlayer.PlayingState
         }
-        audioAnalyzer: analyzerInstance
-        
-        property real baseAmplitude: volume * 0.6
-        
-        // Use a sampled amplitude value updated by timer below instead of direct
-        // binding to analyzerInstance.overallAmplitude, which updates at audio-frame
-        // rate and causes exponential binding cascade through AudioVisualizerView's
-        // circle dimensions, AudioControls progress bars, MusicPlayerOverlay, etc.
-        property real _sampledAmplitude: 0.0
-        
-        amplitude: _sampledAmplitude
-        
-        // Sample the analyzer's overallAmplitude at 50ms (20 FPS) when active.
-        // When not active, fall back to the smooth varying animation timer.
-        Timer {
-            id: amplitudeSampleTimer
-            interval: 50
-            running: audioVisualizer.active && analyzerInstance && analyzerInstance.active
-            repeat: true
-            onTriggered: {
-                if (!analyzerInstance || !analyzerInstance.active) return
-                const raw = analyzerInstance.overallAmplitude || 0.0
-                audioVisualizer._sampledAmplitude = raw * 2.0
+
+        sourceComponent: audioVisualizer3DEnabled ? visualizer3dComponent : visualizer2dComponent
+    }
+
+    // Full-screen drag — handled inside Audio3DVisualizer when handlesOwnInput is true.
+    MouseArea {
+        id: scene3dDragArea
+        anchors.fill: parent
+        z: 3
+        enabled: audioVisualizer3DEnabled && source !== ""
+                 && (!audioVisualizerLoader.item
+                     || !audioVisualizerLoader.item.handlesOwnInput)
+        acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+        preventStealing: true
+
+        property real _lastX: 0
+        property real _lastY: 0
+
+        onPressed: (mouse) => {
+            _lastX = mouse.x
+            _lastY = mouse.y
+            showControls = true
+            controlsHideTimer.restart()
+        }
+
+        onPositionChanged: (mouse) => {
+            if (!pressed)
+                return
+            const dx = mouse.x - _lastX
+            const dy = mouse.y - _lastY
+            _lastX = mouse.x
+            _lastY = mouse.y
+            const viz = audioVisualizerLoader.item
+            if (viz && typeof viz.applyPointerDrag === "function") {
+                const shift = (mouse.modifiers & Qt.ShiftModifier) !== 0
+                const middle = (mouse.buttons & Qt.MiddleButton) !== 0
+                viz.applyPointerDrag(dx, dy, middle, shift)
             }
         }
-        
-        // Fallback animation timer (when analyzer is not active but visualizer is)
-        Timer {
-            interval: 100
-            running: audioVisualizer.active && (!analyzerInstance || !analyzerInstance.active)
-            repeat: true
-            onTriggered: {
-                // Fallback: Create smooth varying amplitude if analyzer not available
-                const time = Date.now() * 0.001
-                const wave1 = Math.sin(time * 2.0) * 0.3 + 0.7
-                const wave2 = Math.sin(time * 3.5) * 0.2 + 0.8
-                const wave3 = Math.sin(time * 1.3) * 0.1 + 0.9
-                audioVisualizer._sampledAmplitude = audioVisualizer.baseAmplitude * wave1 * wave2 * wave3
+
+        onWheel: (wheel) => {
+            const viz = audioVisualizerLoader.item
+            if (viz && typeof viz.applyWheelZoom === "function")
+                viz.applyWheelZoom(wheel.angleDelta.y)
+            wheel.accepted = true
+        }
+
+        onDoubleClicked: {
+            const viz = audioVisualizerLoader.item
+            if (viz && typeof viz.resetSceneView === "function")
+                viz.resetSceneView()
+        }
+    }
+
+    Component {
+        id: visualizer2dComponent
+
+        AudioVisualizerView {
+            id: audioVisualizer
+            anchors.fill: parent
+            visualizerColor: foregroundColor
+            active: audioVisualizerLoader.visualizerActive
+            audioAnalyzer: analyzerInstance
+
+            property real baseAmplitude: volume * 0.6
+            property real _sampledAmplitude: 0.0
+            amplitude: _sampledAmplitude
+
+            Timer {
+                id: amplitudeSampleTimer
+                interval: 50
+                running: audioVisualizer.active && analyzerInstance && analyzerInstance.active
+                repeat: true
+                onTriggered: {
+                    if (!analyzerInstance || !analyzerInstance.active)
+                        return
+                    const raw = analyzerInstance.overallAmplitude || 0.0
+                    audioVisualizer._sampledAmplitude = raw * 2.0
+                }
+            }
+
+            Timer {
+                interval: 100
+                running: audioVisualizer.active && (!analyzerInstance || !analyzerInstance.active)
+                repeat: true
+                onTriggered: {
+                    const time = Date.now() * 0.001
+                    const wave1 = Math.sin(time * 2.0) * 0.3 + 0.7
+                    const wave2 = Math.sin(time * 3.5) * 0.2 + 0.8
+                    const wave3 = Math.sin(time * 1.3) * 0.1 + 0.9
+                    audioVisualizer._sampledAmplitude = audioVisualizer.baseAmplitude * wave1 * wave2 * wave3
+                }
+            }
+        }
+    }
+
+    Component {
+        id: visualizer3dComponent
+
+        Audio3DVisualizer {
+            anchors.fill: parent
+            visualizerColor: foregroundColor
+            active: audioVisualizerLoader.visualizerActive
+            audioAnalyzer: analyzerInstance
+            coverArtUrl: resolvedCoverArtUrl
+            mineradioPreset: audioVisualizerPreset
+            immersiveMode: audioPlayer.immersiveAudio3D
+            songTitle: audioPlayer.immersiveTrackTitle
+            songArtist: audioPlayer.immersiveTrackArtist
+
+            onSceneInteracted: {
+                showControls = true
+                controlsHideTimer.restart()
             }
         }
     }
@@ -2420,8 +2550,8 @@ Item {
             : (parent.height - implicitHeight) / 2  // Center vertically when no lyrics
         width: Math.min(parent.width * 0.8, parent.width - 80)
         spacing: Math.max(24, parent.width * 0.04)
-        // Always visible when source is set - don't hide when metadata popup is open
-        visible: source !== ""
+        // Hidden while 3D visualizer is active — cover becomes the particle field
+        visible: source !== "" && !audioVisualizer3DEnabled
         
         Behavior on y {
             NumberAnimation {
@@ -2796,7 +2926,7 @@ Item {
         anchors.bottomMargin: 100  // Leave space for audio controls
         width: Math.min(mainContent.width, parent.width * 0.7)
         spacing: 8
-        visible: source !== "" && !showingMetadata && showLyrics && 
+        visible: source !== "" && !showingMetadata && !audioVisualizer3DEnabled && showLyrics &&
                  ((lyricsClient.lyricLines.length > 0 || translatedLyricLines.length > 0) || 
                   lyricsClient.loading || isTranslating || showStatusMessage)
         opacity: visible ? 1.0 : 0.0

@@ -20,6 +20,8 @@ Rectangle {
     property bool snowEffectEnabled: false
     property bool badAppleEffectEnabled: false
     property bool betaAudioProcessingEnabled: true
+    property bool audioVisualizer3DEnabled: false
+    property int audioVisualizerPreset: 0
     property bool lyricsTranslationEnabled: false
     property string lyricsTranslationApiKey: ""
     property string lyricsTranslationTargetLanguage: "en"
@@ -50,6 +52,8 @@ Rectangle {
     signal badAppleEasterEggClicked()
     signal undertaleEasterEggClicked()
     signal betaAudioProcessingToggled(bool enabled)
+    signal audioVisualizer3DToggled(bool enabled)
+    signal audioVisualizerPresetSelected(int preset)
     signal lyricsTranslationToggled(bool enabled)
     signal lyricsTranslationApiKeyEdited(string apiKey)
     signal lyricsTranslationTargetLanguageEdited(string language)
@@ -2067,6 +2071,47 @@ Rectangle {
                 description: qsTr("⚠️ BETA: Enables real-time audio equalizer processing. Experimental feature. Requires restart.")
             checked: betaAudioProcessingEnabled
                 onToggled: (checked) => betaAudioProcessingToggled(checked)
+            }
+
+            ModernToggle {
+                label: qsTr("Mineradio 3D Visualizer")
+                description: qsTr("Replaces the classic 2D bar visualizer with a native GPU particle scene inspired by Mineradio (SILK, TUNNEL, ORBIT).")
+                checked: audioVisualizer3DEnabled
+                onToggled: (checked) => audioVisualizer3DToggled(checked)
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 8
+                visible: audioVisualizer3DEnabled
+                spacing: 8
+
+                Text {
+                    text: qsTr("3D preset")
+                    font.pixelSize: 13
+                    font.weight: Font.Medium
+                    color: foregroundColor
+                    opacity: 0.85
+                }
+
+                RowLayout {
+                    spacing: 8
+
+                    Repeater {
+                        model: [
+                            { id: 0, label: qsTr("SILK") },
+                            { id: 1, label: qsTr("TUNNEL") },
+                            { id: 2, label: qsTr("ORBIT") }
+                        ]
+                        delegate: Button {
+                            text: modelData.label
+                            checkable: true
+                            checked: audioVisualizerPreset === modelData.id
+                            onClicked: audioVisualizerPresetSelected(modelData.id)
+                            Layout.fillWidth: true
+                        }
+                    }
+                }
             }
         }
     }

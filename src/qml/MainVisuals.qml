@@ -46,7 +46,20 @@ Item {
         listenTogetherActive: appWin.showingListenTogether
         window: appWin
         frameHelper: frameHelper
-        autoHideEnabled: appWin.autoHideTitleBar
+        autoHideEnabled: appWin.autoHideTitleBar || (appWin.audioImmersive3D === true)
+
+        Connections {
+            target: appWin
+            function onAudioImmersive3DChanged() {
+                if (!appWin)
+                    return
+                if (appWin.audioImmersive3D) {
+                    customTitleBar.titleBarVisible = false
+                } else if (!appWin.autoHideTitleBar) {
+                    customTitleBar.titleBarVisible = true
+                }
+            }
+        }
 
         onRightControlsHitWidthChanged: {
             if (frameHelper) {
@@ -205,7 +218,9 @@ Item {
 
             onPositionChanged: (mouse) => {
                 const w = root.appWindow
-                if (!w || !w.autoHideTitleBar || !customTitleBar.autoHideEnabled)
+                if (!w || !customTitleBar.autoHideEnabled)
+                    return
+                if (!w.autoHideTitleBar && !w.audioImmersive3D)
                     return
                 if (!customTitleBar.titleBarVisible)
                     return
@@ -229,7 +244,10 @@ Item {
             anchors.right: parent.right
             height: 30
             z: 1000000
-            visible: root.appWindow && root.appWindow.autoHideTitleBar && !customTitleBar.titleBarVisible && !root.appWindow.undertaleFightEnabled
+            visible: root.appWindow
+                     && !customTitleBar.titleBarVisible
+                     && !root.appWindow.undertaleFightEnabled
+                     && (root.appWindow.autoHideTitleBar || root.appWindow.audioImmersive3D)
             enabled: visible
 
             onVisibleChanged: {
@@ -252,7 +270,9 @@ Item {
 
                 onEntered: {
                     const w = root.appWindow
-                    if (!w || !w.autoHideTitleBar || !customTitleBar)
+                    if (!w || !customTitleBar)
+                        return
+                    if (!w.autoHideTitleBar && !w.audioImmersive3D)
                         return
                     customTitleBar.titleBarVisible = true
                     customTitleBar.hideTimer.stop()

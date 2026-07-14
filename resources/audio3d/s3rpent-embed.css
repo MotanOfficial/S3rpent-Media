@@ -1,0 +1,39 @@
+/* S3rpent Media embed: show only the Three.js canvas, hide Mineradio chrome */
+html.s3rpent-embed #desktop-titlebar,
+html.s3rpent-embed #search-area,
+html.s3rpent-embed #top-right,
+html.s3rpent-embed #thumb-wrap,
+html.s3rpent-embed #fx-fab,
+html.s3rpent-embed #fx-panel,
+html.s3rpent-embed #trial-banner,
+html.s3rpent-embed #ai-depth-chip,
+html.s3rpent-embed #beat-chip,
+html.s3rpent-embed #gesture-hud,
+html.s3rpent-embed #hand-canvas,
+html.s3rpent-embed #hint,
+html.s3rpent-embed #upload-tip,
+html.s3rpent-embed #drop-overlay,
+html.s3rpent-embed #idle-guide-canvas,
+html.s3rpent-embed #login-guide-canvas,
+html.s3rpent-embed #toast,
+html.s3rpent-embed #source-fallback-notice,
+html.s3rpent-embed #bottom-bar,
+html.s3rpent-embed #bottom-handle,
+html.s3rpent-embed #empty-home,
+html.s3rpent-embed .modal-mask {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  display: none !important;
+}
+
+html.s3rpent-embed body {
+  background: #000 !important;
+  cursor: default !important;
+}
+
+html.s3rpent-embed #canvas-container {
+  opacity: 1 !important;
+  transform: none !important;
+  filter: none !important;
+}

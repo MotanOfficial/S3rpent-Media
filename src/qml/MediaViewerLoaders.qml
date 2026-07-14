@@ -48,6 +48,8 @@ Item {
                 audioPlayerLoader.item.lyricsTranslationApiKey = appWindow.lyricsTranslationApiKey
                 audioPlayerLoader.item.lyricsTranslationTargetLanguage = appWindow.lyricsTranslationTargetLanguage
                 audioPlayerLoader.item.betaAudioProcessingEnabled = appWindow.betaAudioProcessingEnabled
+                audioPlayerLoader.item.audioVisualizer3DEnabled = appWindow.audioVisualizer3DEnabled
+                audioPlayerLoader.item.audioVisualizerPreset = appWindow.audioVisualizerPreset
             }
             if (markdownViewerLoader.item) {
                 markdownViewerLoader.item.source = appWindow.currentImage
@@ -640,6 +642,8 @@ Item {
                     item.lyricsTranslationApiKey = win.lyricsTranslationApiKey
                     item.lyricsTranslationTargetLanguage = win.lyricsTranslationTargetLanguage
                     item.betaAudioProcessingEnabled = win.betaAudioProcessingEnabled
+                    item.audioVisualizer3DEnabled = win.audioVisualizer3DEnabled
+                    item.audioVisualizerPreset = win.audioVisualizerPreset
                     item.discordRPCEnabled = win.discordRPCEnabled
                     item.coverArtSource = win.coverArtSource
                     item.lastFMApiKey = win.lastFMApiKey
@@ -658,6 +662,8 @@ Item {
                             item.lyricsTranslationApiKey = win2.lyricsTranslationApiKey
                             item.lyricsTranslationTargetLanguage = win2.lyricsTranslationTargetLanguage
                             item.betaAudioProcessingEnabled = win2.betaAudioProcessingEnabled
+                            item.audioVisualizer3DEnabled = win2.audioVisualizer3DEnabled
+                            item.audioVisualizerPreset = win2.audioVisualizerPreset
                             item.discordRPCEnabled = win2.discordRPCEnabled
                             item.coverArtSource = win2.coverArtSource
                             item.lastFMApiKey = win2.lastFMApiKey
@@ -738,6 +744,20 @@ Item {
                     target: audioPlayer
                     property: "foregroundColor"
                     value: mediaViewerLoaders.appWindow ? mediaViewerLoaders.appWindow.foregroundColor : "#f5f5f5"
+                    when: mediaViewerLoaders.appWindow ? true : false
+                }
+
+                Binding {
+                    target: audioPlayer
+                    property: "audioVisualizer3DEnabled"
+                    value: mediaViewerLoaders.appWindow ? mediaViewerLoaders.appWindow.audioVisualizer3DEnabled : false
+                    when: mediaViewerLoaders.appWindow ? true : false
+                }
+
+                Binding {
+                    target: audioPlayer
+                    property: "audioVisualizerPreset"
+                    value: mediaViewerLoaders.appWindow ? mediaViewerLoaders.appWindow.audioVisualizerPreset : 0
                     when: mediaViewerLoaders.appWindow ? true : false
                 }
 

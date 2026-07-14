@@ -515,6 +515,9 @@ set(QML_FILES
         src/qml/ImageThumbnailPopup.qml
         src/qml/MarkdownViewer.qml
         src/qml/AudioVisualizerView.qml
+        src/qml/Audio3DVisualizer.qml
+        src/qml/Audio3DVisualizerNative.qml
+        src/qml/Audio3DStageTitle.qml
         src/qml/BassPulseWindow.qml
         src/qml/BassPulseManager.qml
         src/qml/DebugConsole.qml
@@ -570,14 +573,40 @@ if(TARGET Qt6::Pdf AND TARGET Qt6::PdfQuick)
     list(APPEND QML_FILES src/qml/PdfViewerImpl.qml)
 endif()
 
-# Add 3D model viewer implementation only if Quick3D is available
+# Add 3D model viewer + audio visualizer when Quick3D is available
 if(TARGET Qt6::Quick3D)
-    list(APPEND QML_FILES src/qml/ModelViewerImpl.qml)
+    list(APPEND QML_FILES
+        src/qml/ModelViewerImpl.qml
+        src/qml/Audio3DVisualizerQuick3D.qml
+    )
+    target_sources(apps3rpent_media PRIVATE
+        src/cpp/audiocoverparticlegeometry.cpp
+        src/cpp/audiocoverparticlegeometry.h
+        src/cpp/audiostarfieldgeometry.cpp
+        src/cpp/audiostarfieldgeometry.h
+    )
+    target_compile_definitions(apps3rpent_media PRIVATE HAS_QUICK3D=1)
+endif()
+
+if(TARGET Qt6::Quick3D)
+    message(STATUS "Mineradio-style 3D audio visualizer enabled (Qt Quick 3D particle field)")
+    set(QUICK3D_QML_RESOURCES
+        src/qml/shaders/audio3d_particles.vert
+        src/qml/shaders/audio3d_particles.frag
+        src/qml/shaders/audio3d_stars.vert
+        src/qml/shaders/audio3d_stars.frag
+        src/qml/shaders/skin_material.vert
+        src/qml/shaders/skin_material.frag
+    )
+else()
+    message(STATUS "Mineradio-style 3D audio visualizer enabled (shader fallback — Qt Quick 3D not found)")
+    set(QUICK3D_QML_RESOURCES)
 endif()
 
 qt_add_qml_module(apps3rpent_media
     URI s3rpent_media
     QML_FILES ${QML_FILES}
+    RESOURCES ${QUICK3D_QML_RESOURCES}
     PREFIX src
 )
 
@@ -601,6 +630,8 @@ qt_add_shaders(apps3rpent_media
         resources/shaders/mpv_video.frag
         resources/shaders/ffmpeg_video.vert
         resources/shaders/ffmpeg_video.frag
+        resources/shaders/audio3d.vert
+        resources/shaders/audio3d.frag
 )
 
 # Add font files to resources

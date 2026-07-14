@@ -66,6 +66,10 @@
 #include "ziparchivereader.h"
 #include "externaldraghelper.h"
 #include "modelsourceresolver.h"
+#ifdef HAS_QUICK3D
+#include "audiocoverparticlegeometry.h"
+#include "audiostarfieldgeometry.h"
+#endif
 #include "youtubeplaybackhelper.h"
 #ifdef HAS_WEBRTC_P2P
 #include "webrtclistentogethermanager.h"
@@ -205,6 +209,10 @@ namespace {
         qmlRegisterType<ZipArchiveReader>("s3rpent_media", 1, 0, "ZipArchiveReader");
         qmlRegisterType<ExternalDragHelper>("s3rpent_media", 1, 0, "ExternalDragHelper");
         qmlRegisterType<ModelSourceResolver>("s3rpent_media", 1, 0, "ModelSourceResolver");
+#ifdef HAS_QUICK3D
+        qmlRegisterType<AudioCoverParticleGeometry>("s3rpent_media", 1, 0, "AudioCoverParticleGeometry");
+        qmlRegisterType<AudioStarfieldGeometry>("s3rpent_media", 1, 0, "AudioStarfieldGeometry");
+#endif
         
         // Register WebRTC Listen Together Manager (conditional on libdatachannel availability)
 #ifdef HAS_WEBRTC_P2P
@@ -692,6 +700,12 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("webrtcP2PAvailable"), QVariant(true));
 #else
     engine.rootContext()->setContextProperty(QStringLiteral("webrtcP2PAvailable"), QVariant(false));
+#endif
+
+#ifdef HAS_QUICK3D
+    engine.rootContext()->setContextProperty(QStringLiteral("quick3DAvailable"), QVariant(true));
+#else
+    engine.rootContext()->setContextProperty(QStringLiteral("quick3DAvailable"), QVariant(false));
 #endif
 
     // Register QML types and singletons (singletons must be registered before loading QML)
